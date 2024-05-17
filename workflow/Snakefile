@@ -38,9 +38,11 @@ rule kmer_encoding:
         fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
     output:
         npz="data/feature_matrix/kmer/{sample}/{region}/{platform}/feature_matrix.npz",
+        tsv="data/feature_matrix/kmer/{sample}/{region}/{platform}/metadata.tsv.gz",
+        json="data/feature_matrix/kmer/{sample}/{region}/{platform}/read_features.json.gz",
     params:
-        k = 16,
-        sample_fraction=0.1,
+        k = 10,
+        sample_fraction=0.02,
         seed=562104830
     conda: 'envs/default.yaml'
     script: "scripts/kmer_encoding.smk.py"
@@ -60,4 +62,4 @@ rule test1:
 
 rule test2:
     input:
-        "data/feature_matrix/kmer/CHM13/TRA/perfect_10k/feature_matrix.npz"
+        "data/feature_matrix/kmer/CHM13/TRA/perfect_50k/read_features.json.gz"

@@ -1,5 +1,13 @@
+from typing import Sequence, Mapping
 import networkx as nx
+from data_io import is_fwd_id, get_fwd_id
 
+import sharedmem
+import scanpy as sc
+import matplotlib.pyplot as plt
+import anndata as ad
+
+from graph import ReadGraph
 
 
 
@@ -10,6 +18,40 @@ def get_graphviz_layout(graph, prog="neato", figsize=(8, 6), seed=43):
         graph, prog="neato", args=f'-Gsize="{fig_width},{fig_height}" -Gstart={seed}'
     )
     return pos
+
+
+def get_adjacency_matrix(graph):
+    G = graph
+    adj_matrix = nx.to_scipy_sparse_array(G)  
+    nodes = list(G.nodes)
+    for i in range(len(nodes)):
+        for j in range(len(nodes)):
+            node1, node2 = nodes[i], nodes[j]
+            if G.has_edge(node1, node2):
+                score = G[node1][node2]['alignment_score']
+                adj_matrix[i, j] = score
+
+
+def get_umap_layout(graph, *, min_distance=1, random_state=0, verbose=False):
+    # From Teng Qiu
+    adj_matrix = nx.to_scipy_sparse_array(graph)
+
+    mdata = ad.AnnData(obs=list(range(adj_matrix.shape[0]))) # type: ignore
+    mdata.obsp["connectivities"] = adj_matrix; 
+ 
+    if adj_matrix.max() > 10:
+        print("\033[0;33;40m", 'Warning:  the values of Connectivity Matrix (representing the weights) are too large', "\033[0m")
+    mdata.uns["neighbors"] = {
+        'connectivities_key': 'connectivities', 'params': {'method': 'umap'}}
+    
+
+    sc.tl.umap(mdata, min_dist=min_distance, random_state=random_state)
+    embeddings = mdata.obsm['X_umap']
+
+    pos = {x: (embeddings[i, 0], embeddings[i, 1]) for i, x in enumerate(graph.nodes)}
+
+    return pos
+
 
 
 def plot_read_graph(ax, read_graph, overlap_dict, *, pos=None, figsize=(8, 6), seed=43):
@@ -52,6 +94,7 @@ def mp_plot_read_graphs(
     read_graphs: Sequence[ReadGraph],
     overlap_dict: Mapping[tuple[int, int], int],
     *,
+    layout_method="neato",
     figsize=(8, 6),
     processes: int = 8,
 ):
@@ -64,20 +107,24 @@ def mp_plot_read_graphs(
             figures.append(fig)
             axes.append(ax)
 
-        layout = [None] * len(read_graphs)
 
         def work(i):
-            pos = get_graphviz_layout(graph=read_graphs[i], figsize=figsize, seed=43)
-            layout[i] = pos
-            return i
+            if layout_method == 'neato':
+                pos = get_graphviz_layout(graph=read_graphs[i], figsize=figsize, seed=43)
+            elif layout_method == 'umap':
+                pos = get_umap_layout(graph=read_graphs[i])
+            else:
+                raise ValueError()
 
-        def reduce(i):
+            return i, pos
+
+        def reduce(i, pos):
             print(i, end=" ")
             plot_read_graph(
                 ax=axes[i],
                 read_graph=read_graphs[i],
                 overlap_dict=overlap_dict,
-                pos=layout[i],
+                pos=pos,
             )
 
         pool.map(work, range(len(read_graphs)), reduce=reduce)
