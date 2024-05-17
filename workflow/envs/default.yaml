@@ -1,0 +1,14 @@
+channels:
+  - defaults
+  - bioconda
+  - conda-forge
+dependencies:
+  - biopython 
+  - matplotlib 
+  - numpy 
+  - pandas 
+  - pysam
+  - python >= 3.9
+  - python-intervaltree
+  - requests
+  - scipy

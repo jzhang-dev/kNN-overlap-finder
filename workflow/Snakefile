@@ -1,0 +1,63 @@
+REFERENCE_FASTA_PATH = dict(HG002="data/reference/HG002/hg002v1.0.1.fasta.gz",
+                            CHM13="data/reference/CHM13/chm13v2.0.fa.gz")
+REGIONS = dict(TRA=("chr14", 14819498, 17749884))
+
+
+wildcard_constraints:
+    length_kb=r"\d+"
+
+rule extract_regional_reference:
+    input:
+        fasta=lambda wildcards: REFERENCE_FASTA_PATH[wildcards['sample']],
+    output:
+        fasta="data/regional_reference/{sample}/{region}/reference.fasta.gz",
+    params:
+        region=lambda wildcards: REGIONS[wildcards['region']]
+    conda: 'envs/default.yaml'
+    script: "scripts/extract_regional_reference.smk.py"
+
+
+
+
+rule simulate_perfect_sequencing_reads:
+    input:
+        fasta="data/regional_reference/{sample}/{region}/reference.fasta.gz",
+    output:
+        fasta="data/regional_reads/{sample}/{region}/perfect_{length_kb}k/reads.fasta.gz",
+    params:
+        length_kb=lambda wildcards: int(wildcards['length_kb']),
+        depth=30,
+        seed=3558929
+    conda: 'envs/default.yaml'
+    script: "scripts/simulate_perfect_sequencing_reads.smk.py"
+    
+
+
+rule kmer_encoding:
+    input:
+        fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
+    output:
+        npz="data/feature_matrix/kmer/{sample}/{region}/{platform}/feature_matrix.npz",
+    params:
+        k = 16,
+        sample_fraction=0.1,
+        seed=562104830
+    conda: 'envs/default.yaml'
+    script: "scripts/kmer_encoding.smk.py"
+
+
+
+
+
+
+
+# ----------------------------------------------------------------------------------------------------
+
+rule test1:
+    input:
+        "data/regional_reads/CHM13/TRA/perfect_10k/reads.fasta.gz"
+
+
+rule test2:
+    input:
+        "data/feature_matrix/kmer/CHM13/TRA/perfect_10k/feature_matrix.npz"
