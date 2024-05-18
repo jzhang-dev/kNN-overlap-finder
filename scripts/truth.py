@@ -6,56 +6,7 @@ import pandas as pd
 import pysam
 from intervaltree import Interval, IntervalTree
 
-import sys
-
 from data_io import get_fwd_id, get_sibling_id  # type: ignore
-
-def get_true_overlaps(candidates, read_indices, bam_path):
-    # Pool candidate IDs
-    candidate_reads = set()
-    for k1, k2 in candidates:
-        candidate_reads.add(get_fwd_id(k1))
-        candidate_reads.add(get_fwd_id(k2))
-
-    # Load read coverage intervals from BAM file
-    interval_dict = {}
-    for segment in pysam.AlignmentFile(bam_path, "rb").fetch():
-        read_name = segment.query_name
-        read_id = read_indices[read_name]
-        reference_name = segment.reference_name
-        if segment.is_supplementary:
-            continue
-        if read_id not in candidate_reads:
-            continue
-        interval_dict[read_id] = (
-            reference_name,
-            segment.reference_start,
-            segment.reference_end,
-        )
-
-    # For each candidate read pair, check whether they truly overlap
-    rows = []
-    for k1, k2 in candidates:
-        fwd_k1, fwd_k2 = get_fwd_id(k1), get_fwd_id(k2)
-
-        interval_1, interval_2 = interval_dict[fwd_k1], interval_dict[fwd_k2]
-
-        chromosome_1, start_1, end_1 = interval_1
-        chromosome_2, start_2, end_2 = interval_2
-
-        overlap = False
-        if chromosome_1 == chromosome_2:
-            if (
-                start_1 <= start_2 <= end_1
-                or start_1 <= end_2 <= end_1
-                or start_2 <= start_1 <= end_2
-                or start_2 <= end_1 <= end_2
-            ):
-                overlap = True
-        row = dict(k1=k1, k2=k2, overlap=int(overlap))
-        rows.append(row)
-    df = pd.DataFrame(rows)
-    return df
 
 
 def load_alignment_intervals(bam_path, read_indices, *, region=None):
@@ -140,16 +91,25 @@ def get_read_graph_statistics(read_graph, overlap_dict, *, n_neighbors=6):
         return nn
 
     # Precision
-    false_positive_edges = set()
+    ## precision = true overlaps / detected edges
+    ## k-precision = true nearest neighbors / detected edges
+    ## NR-precision = non-redundant edges / detected edges
+    false_positive_edges = set() 
+    k_false_positive_edges = set() 
     for read_1, read_2 in read_graph.edges:
         read_1, read_2 = get_fwd_id(read_1), get_fwd_id(read_2)
-        # if read_2 not in get_nn(read_1) and read_1 not in get_nn(read_2):
-        #     false_positive_edges.add((read_1, read_2))
         if overlap_dict[read_1][read_2] <= 0:
             false_positive_edges.add((read_1, read_2))
+        if read_2 not in get_nn(read_1) and read_1 not in get_nn(read_2):
+            k_false_positive_edges.add((read_1, read_2))
     precision = 1 - len(false_positive_edges) / len(read_graph.edges)
+    k_precision = 1 - len(k_false_positive_edges) / len(read_graph.edges)
+
     # Recall
-    false_negative_edges = set()
+    ## recall = detected overlaps / all overlaps
+    ## k-recall = detected nearest neighbors / all nearest neighbors
+    ## NR-recall = detected non-redundant edges / all non-redundant edges
+    false_negative_edges = set() # 
     neighbor_count = 0
     for read_1 in read_graph.nodes:
         neighbors = get_nn(read_1)
@@ -163,6 +123,7 @@ def get_read_graph_statistics(read_graph, overlap_dict, *, n_neighbors=6):
 
     result = dict(
         precision=precision,
+        k_precision=k_precision,
         false_positive_edges=false_positive_edges,
         recall=recall,
         false_negative_edges=false_negative_edges,

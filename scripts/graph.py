@@ -7,8 +7,30 @@ from functools import cache
 from dataclasses import dataclass
 import gzip
 import networkx as nx
+from intervaltree import Interval, IntervalTree
+
+
 from data_io import get_sibling_id, is_fwd_id, get_fwd_id
-from align import _PairwiseAligner
+from align import _PairwiseAligner, run_multiprocess_alignment
+
+
+@dataclass
+class GenomicInterval:
+    chromosome: str
+    start: int
+    end: int
+
+
+def get_interval_trees(
+    read_intervals: Mapping[int, Collection[GenomicInterval]]
+) -> dict[str, IntervalTree]:
+    tree_dict = collections.defaultdict(IntervalTree)
+    for read, intervals in read_intervals.items():
+        for intv in intervals:
+            tree = tree_dict[intv.chromosome]
+            tree.addi(intv.start, intv.end, read)
+    return tree_dict
+
 
 class ReadGraph(nx.Graph):
     @classmethod
@@ -53,10 +75,66 @@ class ReadGraph(nx.Graph):
                 graph.add_edge(node, nbr_node, alignment_score=score)
         return graph
 
+    @classmethod
+    def from_intervals(cls, read_intervals: Mapping[int, Collection[GenomicInterval]]):
+        trees = get_interval_trees(read_intervals=read_intervals)
+        graph = cls()
+        for read_0, intervals in read_intervals.items():
+            for intv in intervals:
+                tree = trees[intv.chromosome]
+                start_0 = intv.start
+                end_0 = intv.end
+                for intv_1 in tree.overlap(start_0, end_0):
+                    read_1 = intv_1.data
+                    if read_1 == read_0:
+                        continue
+                    if graph.has_edge(read_0, read_1):
+                        continue
+                    start_1, end_1 = intv_1.begin, intv_1.end
+                    overlap_size = max(0, min(end_0, end_1) - max(start_0, start_1))
+                    left_overhang_size = abs(start_0 - start_1)
+                    left_overhang_node = read_0 if start_0 <= start_1 else read_1
+                    right_overhang_size = abs(end_0 - end_1)
+                    right_overhang_node = read_0 if end_0 >= end_1 else read_1
+                    graph.add_edge(
+                        read_0,
+                        read_1,
+                        overlap_size=overlap_size,
+                        left_overhang_size=left_overhang_size,
+                        left_overhang_node=left_overhang_node,
+                        right_overhang_size=right_overhang_size,
+                        right_overhang_node=right_overhang_node,
+                        redundant=True,
+                    )
+        for node_0 in graph.nodes():
+            nearest_left_node = None
+            min_left_overhang = float("inf")
+            nearest_right_node = None
+            min_right_overhang = float("inf")
+            for node_1, data in graph[node_0].items():
+                if (
+                    data["left_overhang_node"] == node_1
+                    and data["left_overhang_size"] < min_left_overhang
+                ):
+                    min_left_overhang = data["left_overhang_size"]
+                    nearest_left_node = node_1
+                if (
+                    data["right_overhang_node"] == node_1
+                    and data["right_overhang_size"] < min_right_overhang
+                ):
+                    min_right_overhang = data["right_overhang_size"]
+                    nearest_right_node = node_1
+            if nearest_left_node is not None:
+                graph[node_0][nearest_left_node]["redundant"] = False
+            if nearest_right_node is not None:
+                graph[node_0][nearest_right_node]["redundant"] = False
+
+        return graph
+
     def align_edges(
         self,
-        read_markers,
-        marker_weights,
+        read_features,
+        feature_weights,
         aligner: Type[_PairwiseAligner],
         align_kw={},
         *,
@@ -67,8 +145,8 @@ class ReadGraph(nx.Graph):
         candidates = list(self.edges)
         alignment_dict = run_multiprocess_alignment(
             candidates=candidates,
-            read_markers=read_markers,
-            marker_weights=marker_weights,
+            read_features=read_features,
+            feature_weights=feature_weights,
             aligner=aligner,
             align_kw=align_kw,
             traceback=True,
@@ -77,3 +155,31 @@ class ReadGraph(nx.Graph):
             **kw,
         )
         return alignment_dict
+
+
+def get_read_graph_statistics(query_graph: ReadGraph, reference_graph: ReadGraph):
+    reference_edges = set(reference_graph.edges)
+    nr_reference_edges = set(
+        (node_1, node_2)
+        for node_1, node_2, data in reference_graph.edges(data=True)
+        if not data["redundant"]
+    )
+    query_edges = set(
+        (get_fwd_id(read_1), get_fwd_id(read_2)) for read_1, read_2 in query_graph.edges
+    )
+    true_positive_edges = query_edges & reference_edges
+    nr_true_positive_edges = query_edges & nr_reference_edges
+
+    recall = len(true_positive_edges) / len(reference_edges)
+    nr_recall = len(nr_true_positive_edges) / len(nr_reference_edges)
+
+    precision = len(true_positive_edges) / len(query_edges)
+    nr_precision = len(nr_true_positive_edges) / len(query_edges)
+
+    result = dict(
+        precision=precision,
+        nr_precision=nr_precision,
+        recall=recall,
+        nr_recall=nr_recall,
+    )
+    return result
