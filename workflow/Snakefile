@@ -28,9 +28,50 @@ rule simulate_perfect_sequencing_reads:
         length_kb=lambda wildcards: int(wildcards['length_kb']),
         depth=30,
         seed=3558929
+    wildcard_constraints:
+        length_kb=r"\d+",
     conda: 'envs/default.yaml'
     script: "scripts/simulate_perfect_sequencing_reads.smk.py"
     
+
+
+rule run_pbsim3:
+    input:
+        reference="data/regional_reference/{sample}/{region}/reference.fasta.gz",
+        model="resources/pbsim/ERRHMM-ONT-HQ.model",
+    output:
+        folder=directory("data/regional_reads/{sample}/{region}/pbsim_ONT_{accuracy}_{length_kb}k"),
+        fasta="data/regional_reads/{sample}/{region}/pbsim_ONT_{accuracy}_{length_kb}k/reads.fasta.gz",
+        maf="data/regional_reads/{sample}/{region}/pbsim_ONT_{accuracy}_{length_kb}k/alignment.maf.gz",
+    wildcard_constraints:
+        accuracy=r"\d+",
+        length_kb=r"\d+",
+    params:
+        accuracy=lambda wildcards: float(wildcards['accuracy']) / 100,
+        length_mean=lambda wildcards: int(wildcards['length_kb']) * 1000,
+        length_sd=lambda wildcards: int(wildcards['length_kb']) * 500,
+        depth=30,
+        seed=5023967
+    conda: "envs/pbsim.yaml"
+    shell:
+        """
+        gunzip -c {input.reference} \
+        | pbsim \
+            --strategy wgs \
+            --method errhmm \
+            --errhmm {input.model} \
+            --depth {params.depth} \
+            --accuracy-mean {params.accuracy} \
+            --length-mean {params.length_mean} \
+            --length-sd  {params.length_sd} \
+            --genome /dev/stdin \
+            --seed {params.seed} \
+            --prefix {output.folder}/output
+        sed -n '1~4s/^@/>/p;2~4p' {output.folder}/output_0001.fastq | gzip -c > {output.fasta}
+        gzip -c {output.folder}/output_0001.maf > {output.maf}
+        rm -rf {output.folder}/output*
+        """
+
 
 
 rule kmer_encoding:
@@ -63,3 +104,9 @@ rule test1:
 rule test2:
     input:
         "data/feature_matrix/kmer/CHM13/TRA/perfect_50k/read_features.json.gz"
+
+
+rule test3:
+    input:
+        "data/regional_reads/CHM13/TRA/pbsim_ONT_95_10k/reads.fasta.gz",
+        "data/feature_matrix/kmer/CHM13/TRA/pbsim_ONT_95_10k/read_features.json.gz",
