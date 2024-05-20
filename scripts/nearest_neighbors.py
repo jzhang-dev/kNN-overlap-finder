@@ -60,7 +60,7 @@ class ExactNearestNeighbors(_NearestNeighbors):
             n_neighbors=n_neighbors, metric=metric
         )
         data = self.data
-        if metric == 'jaccard' and isinstance(data, csr_matrix):
+        if metric == "jaccard" and isinstance(data, csr_matrix):
             data = data.toarray()
         nbrs.fit(data)
         _, nbr_indices = nbrs.kneighbors(data)
@@ -94,7 +94,7 @@ class WeightedLowHash(_NearestNeighbors):
     def _pcws_low_hash(
         self, lowhash_fraction, repeats=1, *, seed=1, verbose=True
     ) -> csr_matrix:
-        data = self.data.T # rows for features; columns for instances
+        data = self.data.T  # rows for features; columns for instances
         feature_num, instance_num = data.shape
         lowhash_buckets = sparse.dok_matrix(
             (feature_num * repeats, instance_num), dtype=np.bool_
@@ -175,7 +175,7 @@ class WeightedLowHash(_NearestNeighbors):
         for i, j in nonzero_indices:
             if i >= j:
                 continue
-            
+
             count = cooccurrence_matrix[i, j]
             neighbor_dict[i][j] = count
             neighbor_dict[j][i] = count
@@ -195,39 +195,6 @@ class WeightedLowHash(_NearestNeighbors):
             )[:n_neighbors]
             nbr_matrix[i, : len(neighbors)] = neighbors
         return nbr_matrix
-
-
-def get_overlap_candidates(
-    neighbor_indices: np.ndarray,
-    read_ids: Sequence[int],
-    n_neighbors: int | None = None,
-    intersect:bool = True
-) -> Sequence[tuple[int, int]]:
-    if n_neighbors is None:
-        n_neighbors = neighbor_indices.shape[1]
-
-    candidates = []
-    for i1, row in enumerate(neighbor_indices):
-        k1 = read_ids[i1]
-        row = [i2 for i2 in row if i2 != i1 and i2 >= 0]
-        candidates += [(k1, read_ids[i2]) for i2 in row[:n_neighbors]]
-
-
-    if intersect:
-        candidates = set(candidates)
-        removed = set()
-        for (k1, k2) in candidates:
-            if (k2, k1) not in candidates:
-                removed.add((k1, k2))
-        candidates -= removed
-    
-    candidates = list(candidates)
-    candidates += [(k2, k1) for k1, k2 in candidates]
-    candidates = [(k1, k2) for k1, k2 in candidates if k1 < k2]
-    candidates = list(sorted(set(candidates)))
-
-    return candidates
-
 
 
 

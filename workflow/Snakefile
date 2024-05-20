@@ -134,3 +134,8 @@ rule test3:
         "data/regional_reads/CHM13/TRA/pbsim_ONT_95_30k/reads.fasta.gz",
         "data/feature_matrix/kmer/CHM13/TRA/pbsim_ONT_95_30k/read_features.json.gz",
         "data/feature_matrix/kmer/CHM13/TRA/pbsim_ONT_95_30k/metadata.tsv.gz",
+
+
+rule test4:
+    input:
+        "data/feature_matrix/kmer/CHM13/TRA/pbsim_ONT_90_30k/read_features.json.gz",

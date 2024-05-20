@@ -1,10 +1,12 @@
 import os, gzip, pickle
+import time
 from sklearn.feature_extraction.text import TfidfTransformer
 from scipy.sparse._csr import csr_matrix
 from typing import Sequence, Type, Mapping
 from dataclasses import dataclass, field
+import numpy as np
 
-from nearest_neighbors import _NearestNeighbors, get_overlap_candidates
+from nearest_neighbors import _NearestNeighbors
 from dim_reduction import SpectralMatrixFree
 from graph import ReadGraph, get_read_graph_statistics
 from align import cWeightedSemiglobalAligner, run_multiprocess_alignment
@@ -16,18 +18,16 @@ class NearestNeighborsConfig:
     use_tfidf: bool = False
     dim_reduction: int | None = None
     n_neighbors: int = 20
-    kw: dict = field(default_factory=dict)
-    overlap_candidates: Sequence[tuple[int, int]] | None = field(
-        default=None, repr=False
-    )
-    graph: ReadGraph | None = field(default=None, repr=False)
-    time: float | None = None
+    nearest_neighbor_kw: dict = field(default_factory=dict, repr=False)
+    elapsed_time: float | None = None
+    require_mutual_neighbors: bool = False
+    pre_align_graph: ReadGraph | None = field(default=None, repr=False)
     pre_align_stats: dict | None = None
+    post_align_intersect: bool = False
+    post_align_graph: ReadGraph | None = field(default=None, repr=False)
     post_align_stats: dict | None = None
 
-    def run(self, data, read_ids: Sequence[int]):
-        import time
-
+    def _get_overlap_candidates(self, data, read_ids):
         start_time = time.time()
         if self.use_tfidf:
             data = TfidfTransformer(use_idf=True, smooth_idf=True).fit_transform(data)
@@ -36,22 +36,31 @@ class NearestNeighborsConfig:
             reducer.fit(data)
             _, data = reducer.transform()
         neighbor_indices = self.method(data).get_neighbors(
-            n_neighbors=self.n_neighbors, **self.kw
+            n_neighbors=self.n_neighbors, **self.nearest_neighbor_kw
         )
         elapsed_time = time.time() - start_time
-        self.time = elapsed_time
-        self.overlap_candidates = get_overlap_candidates(
-            neighbor_indices, read_ids, n_neighbors=self.n_neighbors
-        )
 
-    def evaluate_pre_alignment(self, reference_graph: ReadGraph):
-        if self.overlap_candidates is None:
-            raise TypeError()
-        graph = ReadGraph.from_overlap_candidates(self.overlap_candidates)
+        overlap_candidates = []
+        for i1, row in enumerate(neighbor_indices):
+            k1 = read_ids[i1]
+            row = [i2 for i2 in row if i2 != i1 and i2 >= 0]
+            overlap_candidates += [(k1, read_ids[i2]) for i2 in row[: self.n_neighbors]]
+
+        return overlap_candidates, elapsed_time
+
+    def compute_pre_alignment_graph(
+        self, data, read_ids, reference_graph: ReadGraph, *, intersect: bool = False
+    ):
+        overlap_candidates, elapsed_time = self._get_overlap_candidates(data, read_ids)
+        self.elapsed_time = elapsed_time
+        graph = ReadGraph.from_overlap_candidates(
+            overlap_candidates, require_mutual_neighbors=intersect
+        )
+        self.pre_align_graph = graph
         result = get_read_graph_statistics(graph, reference_graph=reference_graph)
         self.pre_align_stats = result
 
-    def evaluate_post_alignment(
+    def compute_post_alignment_graph(
         self,
         read_features,
         feature_weights,
@@ -62,16 +71,14 @@ class NearestNeighborsConfig:
         processes=8,
         _cache: dict = {},
     ):
-        if self.overlap_candidates is None:
+        if self.pre_align_graph is None:
             raise TypeError()
-        candidates = self.overlap_candidates
 
-        alignment_dict = run_multiprocess_alignment(
-            candidates,
-            read_features,
-            feature_weights,
+        alignment_dict = self.pre_align_graph.align_edges(
+            read_features=read_features,
+            feature_weights=feature_weights,
             aligner=cWeightedSemiglobalAligner,
-            align_kw=dict(max_cells=int(1e9)),
+            align_kw=dict(max_cells=int(1e10)),
             traceback=False,
             processes=processes,
             batch_size=200,
@@ -81,12 +88,11 @@ class NearestNeighborsConfig:
         )
 
         graph = ReadGraph.from_pairwise_alignment(
-            candidates,
             alignment_dict,
             n_neighbors=n_neighbors,
             min_alignment_score=min_alignment_score,
         )
-        self.graph = graph
+        self.post_align_graph = graph
         result = get_read_graph_statistics(graph, reference_graph=reference_graph)
         self.post_align_stats = result
 
@@ -115,14 +121,15 @@ def mp_evaluate_configs(
     config_list = configs
     for config in config_list:
         print(config)
-        config.run(data, list(read_features))
-        config.evaluate_pre_alignment(reference_graph=reference_graph)
+        config.compute_pre_alignment_graph(
+            data=data, reference_graph=reference_graph, read_ids=list(read_features)
+        )
         stats = config.pre_align_stats
         if stats is None:
             raise TypeError()
         print(
             "\n",
-            "Post-alignment:",
+            "Pre-alignment:",
             f"precision={stats['precision']:.3f}",
             f"nr_precision={stats['nr_precision']:.3f}",
             f"recall={stats['recall']:.3f}",
@@ -130,7 +137,7 @@ def mp_evaluate_configs(
             "\n",
         )
 
-        config.evaluate_post_alignment(
+        config.compute_post_alignment_graph(
             reference_graph=reference_graph,
             _cache=alignment_dict,
             feature_weights=feature_weights,
@@ -144,7 +151,7 @@ def mp_evaluate_configs(
             raise TypeError()
         print(
             "\n",
-            "Pre-alignment:",
+            "Post-alignment:",
             f"precision={stats['precision']:.3f}",
             f"nr_precision={stats['nr_precision']:.3f}",
             f"recall={stats['recall']:.3f}",
@@ -152,6 +159,6 @@ def mp_evaluate_configs(
             "\n",
         )
 
-    if pickle_file is not None  and len(alignment_dict) > initial_alignment_count:
+    if pickle_file is not None and len(alignment_dict) > initial_alignment_count:
         with gzip.open(pickle_file, "wb") as f:
-            pickle.dump(alignment_dict, f) # type: ignore
+            pickle.dump(alignment_dict, f)  # type: ignore

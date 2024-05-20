@@ -4,12 +4,13 @@
 import collections
 from typing import Type, Sequence, Mapping, Any, Collection, MutableMapping
 from dataclasses import dataclass
+import numpy as np
 import networkx as nx
 from intervaltree import Interval, IntervalTree
 
 
 from data_io import get_sibling_id, get_fwd_id
-from align import _PairwiseAligner, run_multiprocess_alignment
+from align import _PairwiseAligner, run_multiprocess_alignment, AlignmentResult
 
 
 @dataclass
@@ -31,8 +32,21 @@ def get_interval_trees(
 
 
 class ReadGraph(nx.Graph):
+
     @classmethod
-    def from_overlap_candidates(cls, candidates: Collection[tuple[int, int]]):
+    def from_overlap_candidates(
+        cls,
+        candidates: Collection[tuple[int, int]],
+        require_mutual_neighbors: bool = False,
+    ):
+        if require_mutual_neighbors:
+            candidates = set(candidates)
+            removed = set()
+            for k1, k2 in candidates:
+                if (k2, k1) not in candidates:
+                    removed.add((k1, k2))
+            candidates -= removed
+
         read_graph = cls()
         read_graph.add_edges_from(candidates)
         return read_graph
@@ -40,16 +54,14 @@ class ReadGraph(nx.Graph):
     @classmethod
     def from_pairwise_alignment(
         cls,
-        candidates: Collection[tuple[int, int]],
-        alignment_dict,
-        n_neighbors=6,
+        alignment_dict: Mapping[tuple[int, int], AlignmentResult],
         *,
+        n_neighbors=6,
         min_alignment_score: int | None = 0,
     ):
         node_neighbors = collections.defaultdict(dict)
-
-        for k1, k2 in candidates:
-            score = alignment_dict[(k1, k2)].score
+        for (k1, k2), result in alignment_dict.items():
+            score = result.score
             node_neighbors[k1][k2] = score
             node_neighbors[k2][k1] = score
 
@@ -134,6 +146,7 @@ class ReadGraph(nx.Graph):
         read_features,
         feature_weights,
         aligner: Type[_PairwiseAligner],
+        traceback:bool = True,
         align_kw={},
         *,
         processes=4,
@@ -147,7 +160,7 @@ class ReadGraph(nx.Graph):
             feature_weights=feature_weights,
             aligner=aligner,
             align_kw=align_kw,
-            traceback=True,
+            traceback=traceback,
             processes=processes,
             _cache=_cache,
             **kw,
@@ -158,12 +171,12 @@ class ReadGraph(nx.Graph):
 def get_read_graph_statistics(query_graph: ReadGraph, reference_graph: ReadGraph):
     reference_edges = set(reference_graph.edges)
     nr_reference_edges = set(
-        (node_1, node_2)
+        tuple(sorted((node_1, node_2)))
         for node_1, node_2, data in reference_graph.edges(data=True)
         if not data["redundant"]
     )
     query_edges = set(
-        (get_fwd_id(read_1), get_fwd_id(read_2)) for read_1, read_2 in query_graph.edges
+        tuple(sorted((read_1, read_2))) for read_1, read_2 in query_graph.edges
     )
     true_positive_edges = query_edges & reference_edges
     nr_true_positive_edges = query_edges & nr_reference_edges
@@ -181,3 +194,5 @@ def get_read_graph_statistics(query_graph: ReadGraph, reference_graph: ReadGraph
         nr_recall=nr_recall,
     )
     return result
+
+

@@ -88,7 +88,6 @@ def plot_read_graph(
     for edge, attr in g.edges.items():
         color = "k"
         k1, k2 = edge
-        k1, k2 = get_fwd_id(k1), get_fwd_id(k2)
 
         if attr.get("redundant", False):
             color = LIGHT_GRAY
@@ -113,6 +112,8 @@ def plot_read_graph(
             color = BLUE
         elif metadata.at[node, "reference_strand"] == "-":
             color = GREEN
+        else:
+            raise ValueError()
         node_colors.append(color)
 
     # Layout
@@ -137,7 +138,7 @@ def plot_read_graph(
 
 
 def mp_plot_read_graphs(
-    read_graphs: Sequence[ReadGraph],
+    query_graphs: Sequence[ReadGraph],
     reference_graph: ReadGraph,
     metadata: pd.DataFrame,
     *,
@@ -145,36 +146,40 @@ def mp_plot_read_graphs(
     figsize=(8, 6),
     node_size=3,
     processes: int = 8,
+    verbose=True,
 ):
-
+    # Create figures 
+    # In JupyterLab, figures will be displayed in the same order.
+    figures = []
+    axes = []
+    for _ in query_graphs:
+        fig, ax = plt.subplots(figsize=figsize)
+        figures.append(fig)
+        axes.append(ax)
     with sharedmem.MapReduce(np=processes) as pool:
-        figures = []
-        axes = []
-        for _ in read_graphs:
-            fig, ax = plt.subplots(figsize=figsize)
-            figures.append(fig)
-            axes.append(ax)
-
         def work(i):
             if layout_method == "umap":
-                pos = get_umap_layout(graph=read_graphs[i])
+                pos = get_umap_layout(graph=query_graphs[i])
             else:
                 pos = get_graphviz_layout(
-                    graph=read_graphs[i], figsize=figsize, seed=43, method=layout_method
+                    graph=query_graphs[i], figsize=figsize, seed=43, method=layout_method
                 )
             return i, pos
 
         def reduce(i, pos):
-            print(i, end=" ")
+            if verbose:
+                print(i, end=" ")
             plot_read_graph(
                 ax=axes[i],
-                query_graph=read_graphs[i],
+                query_graph=query_graphs[i],
                 reference_graph=reference_graph,
                 metadata=metadata,
                 pos=pos,
                 node_size=node_size,
             )
 
-        pool.map(work, range(len(read_graphs)), reduce=reduce)
+        pool.map(work, range(len(query_graphs)), reduce=reduce)
+        if verbose:
+            print("")
 
     return figures, axes

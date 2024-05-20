@@ -103,21 +103,28 @@ def encode_reads(
     )
 
     # Build metadata
+    def flip(strand):
+        return {"+": "-", "-": "+"}[strand]
+
     rows = []
     for i, seq in enumerate(read_sequences):
         read_name = read_names[i]
+        read_orientation = read_orientations[i]
+        reference_strand = info_df.at[read_name, "reference_strand"]
+        if read_orientation == "-":
+            reference_strand = flip(reference_strand)
         rows.append(
             dict(
                 read_id=i,
                 read_name=read_name,
-                read_orientation=read_orientations[i],
+                read_orientation=read_orientation,
                 read_length=info_df.at[read_name, "read_length"],
-                reference_strand=info_df.at[read_name, "reference_strand"],
+                reference_strand=reference_strand,
                 reference_start=info_df.at[read_name, "reference_start"],
                 reference_end=info_df.at[read_name, "reference_end"],
             )
         )
-    metadata= pd.DataFrame(rows)
+    metadata = pd.DataFrame(rows)
 
     return feature_matrix, read_features, metadata
 
@@ -132,7 +139,7 @@ def main(snakemake: "SnakemakeContext"):
     sample_fraction = snakemake.params["sample_fraction"]
     seed = snakemake.params["seed"]
 
-    feature_matrix, read_features,metadata = encode_reads(
+    feature_matrix, read_features, metadata = encode_reads(
         fasta_path=input_fasta_file,
         info_path=input_tsv_file,
         k=k,
@@ -142,7 +149,7 @@ def main(snakemake: "SnakemakeContext"):
     sp.save_npz(output_npz_file, feature_matrix)
     with gzip.open(output_json_file, "wt") as f:
         json.dump(read_features, f)
-    metadata.to_csv(output_tsv_file, index=False, sep='\t')
+    metadata.to_csv(output_tsv_file, index=False, sep="\t")
 
 
 if __name__ == "__main__":
