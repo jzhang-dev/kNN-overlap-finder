@@ -74,22 +74,44 @@ rule run_pbsim3:
 
 
 
-rule kmer_encoding:
+
+rule get_perfect_read_info:
     input:
         fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
     output:
+        tsv="data/regional_reads/{sample}/{region}/{platform}/read_info.tsv.gz",
+    wildcard_constraints:
+        platform=r"perfect_.+"
+    conda: 'envs/default.yaml'
+    script: "scripts/get_perfect_read_info.smk.py"
+
+
+rule get_pbsim_metadata:
+    input:
+        #fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
+        maf="data/regional_reads/{sample}/{region}/{platform}/alignment.maf.gz",
+    output:
+        tsv="data/regional_reads/{sample}/{region}/{platform}/read_info.tsv.gz",
+    wildcard_constraints:
+        platform=r"pbsim_.+"
+    conda: 'envs/default.yaml'
+    script: "scripts/get_pbsim_read_info.smk.py"
+
+
+rule kmer_encoding:
+    input:
+        fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
+        tsv="data/regional_reads/{sample}/{region}/{platform}/read_info.tsv.gz",
+    output:
         npz="data/feature_matrix/kmer/{sample}/{region}/{platform}/feature_matrix.npz",
-        tsv="data/feature_matrix/kmer/{sample}/{region}/{platform}/metadata.tsv.gz",
         json="data/feature_matrix/kmer/{sample}/{region}/{platform}/read_features.json.gz",
+        tsv="data/feature_matrix/kmer/{sample}/{region}/{platform}/metadata.tsv.gz",
     params:
         k = 10,
-        sample_fraction=0.02,
+        sample_fraction=0.05,
         seed=562104830
     conda: 'envs/default.yaml'
     script: "scripts/kmer_encoding.smk.py"
-
-
-
 
 
 
@@ -103,10 +125,12 @@ rule test1:
 
 rule test2:
     input:
-        "data/feature_matrix/kmer/CHM13/TRA/perfect_50k/read_features.json.gz"
+        "data/feature_matrix/kmer/CHM13/TRA/perfect_50k/read_features.json.gz",
+        "data/feature_matrix/kmer/CHM13/TRA/perfect_50k/metadata.tsv.gz",
 
 
 rule test3:
     input:
-        "data/regional_reads/CHM13/TRA/pbsim_ONT_95_10k/reads.fasta.gz",
-        "data/feature_matrix/kmer/CHM13/TRA/pbsim_ONT_95_10k/read_features.json.gz",
+        "data/regional_reads/CHM13/TRA/pbsim_ONT_95_30k/reads.fasta.gz",
+        "data/feature_matrix/kmer/CHM13/TRA/pbsim_ONT_95_30k/read_features.json.gz",
+        "data/feature_matrix/kmer/CHM13/TRA/pbsim_ONT_95_30k/metadata.tsv.gz",

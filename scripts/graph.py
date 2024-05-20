@@ -3,14 +3,12 @@
 
 import collections
 from typing import Type, Sequence, Mapping, Any, Collection, MutableMapping
-from functools import cache
 from dataclasses import dataclass
-import gzip
 import networkx as nx
 from intervaltree import Interval, IntervalTree
 
 
-from data_io import get_sibling_id, is_fwd_id, get_fwd_id
+from data_io import get_sibling_id, get_fwd_id
 from align import _PairwiseAligner, run_multiprocess_alignment
 
 
@@ -69,7 +67,7 @@ class ReadGraph(nx.Graph):
             }
 
             for nbr_node, score in nearest_neighbors.items():
-                if nbr_node == get_sibling_id(node):
+                if nbr_node == node or nbr_node == get_sibling_id(node):
                     # Skip self edges
                     continue
                 graph.add_edge(node, nbr_node, alignment_score=score)

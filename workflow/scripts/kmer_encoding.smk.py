@@ -31,8 +31,13 @@ def init_reverse_complement():
 reverse_complement = init_reverse_complement()
 
 
-def encode_reads_from_fasta_gz(
-    fasta_gz_file, k, sample_fraction: float, seed: int, include_reverse_complement=True
+def encode_reads(
+    fasta_path: str,
+    info_path: str,
+    k,
+    sample_fraction: float,
+    seed: int,
+    include_reverse_complement=True,
 ):
     """
     Encodes sequencing reads from a gzipped FASTA file as a sparse matrix.
@@ -44,36 +49,25 @@ def encode_reads_from_fasta_gz(
     Returns:
         A scipy.sparse CSR matrix representing the k-mer counts for each read.
     """
-
-    
+    # Load reads info
+    info_df = pd.read_table(info_path).set_index("read_name")
 
     # Load reads
     read_sequences = []
     read_names = []
-    strands = []
-    read_lengths = []
-    start_positions = []
-    end_positions = []
-    
-    with gzip.open(fasta_gz_file, "rt") as handle:  # Open gzipped file in text mode
+    read_orientations = []
+
+    with gzip.open(fasta_path, "rt") as handle:  # Open gzipped file in text mode
         for record in SeqIO.parse(handle, "fasta"):
             seq = str(record.seq)
             read_sequences.append(seq)
             read_names.append(record.id)
-            strands.append("+")
-            read_lengths.append(len(seq))
-            start = int(record.id.split("_")[0])
-            end = start + len(seq)
-            start_positions.append(start)
-            end_positions.append(end)
+            read_orientations.append("+")
 
             if include_reverse_complement:
                 read_sequences.append(reverse_complement(seq))
                 read_names.append(record.id)
-                strands.append("-")
-                read_lengths.append(len(seq))
-                start_positions.append(start)
-                end_positions.append(end)
+                read_orientations.append("-")
 
     # Build vocabulary
     vocab = set()
@@ -85,9 +79,8 @@ def encode_reads_from_fasta_gz(
     kmer_indices = {kmer: i for i, kmer in enumerate(vocab)}
 
     # Build matrix
-
     row_ind, col_ind, data = [], [], []
-    features = []
+    read_features = []
     for i, seq in enumerate(read_sequences):
         features_i = []
         for p in range(len(seq) - k + 1):
@@ -96,7 +89,8 @@ def encode_reads_from_fasta_gz(
             if j is None:
                 continue
             features_i.append(j)
-        features.append(features_i)
+
+        read_features.append(features_i)
 
         kmer_counts = Counter(features_i)
         for j, count in kmer_counts.items():
@@ -107,35 +101,49 @@ def encode_reads_from_fasta_gz(
     feature_matrix = sp.csr_matrix(
         (data, (row_ind, col_ind)), shape=(len(read_sequences), len(vocab))
     )
-    metadata = pd.DataFrame(
-        dict(
-            row_id=list(range(len(read_sequences))),
-            read_name=read_names,
-            strand=strands,
-            read_length=read_lengths,
-            start=start_positions,
-            end=end_positions,
+
+    # Build metadata
+    rows = []
+    for i, seq in enumerate(read_sequences):
+        read_name = read_names[i]
+        rows.append(
+            dict(
+                read_id=i,
+                read_name=read_name,
+                read_orientation=read_orientations[i],
+                read_length=info_df.at[read_name, "read_length"],
+                reference_strand=info_df.at[read_name, "reference_strand"],
+                reference_start=info_df.at[read_name, "reference_start"],
+                reference_end=info_df.at[read_name, "reference_end"],
+            )
         )
-    )
-    return feature_matrix, metadata, features
+    metadata= pd.DataFrame(rows)
+
+    return feature_matrix, read_features, metadata
 
 
 def main(snakemake: "SnakemakeContext"):
-    input_file = snakemake.input["fasta"]
+    input_fasta_file = snakemake.input["fasta"]
+    input_tsv_file = snakemake.input["tsv"]
     output_npz_file = snakemake.output["npz"]
+    output_json_file = snakemake.output["json"]
     output_tsv_file = snakemake.output["tsv"]
-    output_json_file = snakemake.output['json']
     k = snakemake.params["k"]
     sample_fraction = snakemake.params["sample_fraction"]
     seed = snakemake.params["seed"]
 
-    feature_matrix, metadata, read_features = encode_reads_from_fasta_gz(
-        fasta_gz_file=input_file, k=k, sample_fraction=sample_fraction, seed=seed
+    feature_matrix, read_features,metadata = encode_reads(
+        fasta_path=input_fasta_file,
+        info_path=input_tsv_file,
+        k=k,
+        sample_fraction=sample_fraction,
+        seed=seed,
     )
     sp.save_npz(output_npz_file, feature_matrix)
-    metadata.to_csv(output_tsv_file, sep="\t", index=False)
-    with gzip.open(output_json_file, 'wt') as f:
+    with gzip.open(output_json_file, "wt") as f:
         json.dump(read_features, f)
+    metadata.to_csv(output_tsv_file, index=False, sep='\t')
+
 
 if __name__ == "__main__":
     main(snakemake)

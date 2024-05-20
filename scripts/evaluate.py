@@ -1,6 +1,7 @@
+import os, gzip, pickle
 from sklearn.feature_extraction.text import TfidfTransformer
 from scipy.sparse._csr import csr_matrix
-from typing import Sequence, Type
+from typing import Sequence, Type, Mapping
 from dataclasses import dataclass, field
 
 from nearest_neighbors import _NearestNeighbors, get_overlap_candidates
@@ -88,3 +89,69 @@ class NearestNeighborsConfig:
         self.graph = graph
         result = get_read_graph_statistics(graph, reference_graph=reference_graph)
         self.post_align_stats = result
+
+
+def mp_evaluate_configs(
+    configs: Sequence[NearestNeighborsConfig],
+    feature_matrix: csr_matrix,
+    read_features: Mapping[int, Sequence[int]],
+    feature_weights: Mapping[int, int],
+    reference_graph: ReadGraph,
+    *,
+    post_align_n_neighbors=6,
+    processes=8,
+    alignment_pickle_path=None,
+):
+    data = feature_matrix
+    pickle_file = alignment_pickle_path
+
+    if pickle_file is not None and os.path.isfile(pickle_file):
+        with gzip.open(pickle_file, "rb") as f:
+            alignment_dict = pickle.load(f)  # type:ignore
+    else:
+        alignment_dict = {}
+    initial_alignment_count = len(alignment_dict)
+
+    config_list = configs
+    for config in config_list:
+        print(config)
+        config.run(data, list(read_features))
+        config.evaluate_pre_alignment(reference_graph=reference_graph)
+        stats = config.pre_align_stats
+        if stats is None:
+            raise TypeError()
+        print(
+            "\n",
+            "Post-alignment:",
+            f"precision={stats['precision']:.3f}",
+            f"nr_precision={stats['nr_precision']:.3f}",
+            f"recall={stats['recall']:.3f}",
+            f"nr_recall={stats['nr_recall']:.3f}",
+            "\n",
+        )
+
+        config.evaluate_post_alignment(
+            reference_graph=reference_graph,
+            _cache=alignment_dict,
+            feature_weights=feature_weights,
+            read_features=read_features,
+            n_neighbors=post_align_n_neighbors,
+            min_alignment_score=0,
+            processes=processes,
+        )
+        stats = config.post_align_stats
+        if stats is None:
+            raise TypeError()
+        print(
+            "\n",
+            "Pre-alignment:",
+            f"precision={stats['precision']:.3f}",
+            f"nr_precision={stats['nr_precision']:.3f}",
+            f"recall={stats['recall']:.3f}",
+            f"nr_recall={stats['nr_recall']:.3f}",
+            "\n",
+        )
+
+    if pickle_file is not None  and len(alignment_dict) > initial_alignment_count:
+        with gzip.open(pickle_file, "wb") as f:
+            pickle.dump(alignment_dict, f) # type: ignore

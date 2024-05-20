@@ -2,6 +2,7 @@ from typing import Sequence, Mapping
 import networkx as nx
 from data_io import is_fwd_id, get_fwd_id
 
+import pandas as pd
 import sharedmem
 import scanpy as sc
 import matplotlib.pyplot as plt
@@ -10,11 +11,14 @@ import anndata as ad
 from graph import ReadGraph
 
 
-def get_graphviz_layout(graph, prog="neato", figsize=(8, 6), seed=43):
+def get_graphviz_layout(graph, method="neato", figsize=(8, 6), seed=43, **kw):
     fig_width, fig_height = figsize
-    pos = nx.nx_agraph.graphviz_layout(
-        graph, prog="neato", args=f'-Gsize="{fig_width},{fig_height}" -Gstart={seed}'
+    graph_attributes = dict(
+        dim=2, dimen=2, size=f'"{fig_width},{fig_height}"', start=seed, smoothing="none"
     )
+    graph_attributes.update(kw)
+    args = " ".join(f"-G{key}={value}" for key, value in graph_attributes.items())
+    pos = nx.nx_agraph.graphviz_layout(graph, prog=method, args=args)
     return pos
 
 
@@ -57,37 +61,75 @@ def get_umap_layout(graph, *, min_distance=1, random_state=0, verbose=False):
 
 
 def plot_read_graph(
-    ax, query_graph, reference_graph=None, *, pos=None, figsize=(8, 6), seed=43
+    ax,
+    query_graph: ReadGraph | None = None,
+    metadata: pd.DataFrame | None = None,
+    reference_graph: ReadGraph | None = None,
+    *,
+    layout_method="sfdp",
+    pos=None,
+    figsize=(8, 6),
+    node_size=3,
+    seed=43,
 ):
-    g = query_graph
+    if query_graph is not None:
+        g = query_graph
+    elif query_graph is None and reference_graph is not None:
+        g = reference_graph
+    else:
+        raise TypeError()
 
-    BLUE = (29 / 255, 89 / 255, 142 / 255, 1)
+    # Edge colors
     GRAY = (0.8, 0.8, 0.8, 1)
+    LIGHT_GRAY = (0.9, 0.9, 0.9, 1)
     RED = (1, 0.1, 0.1, 1)
-    GREEN = (53 / 255, 125 / 255, 35 / 255, 1)
 
     edge_colors = []
     for edge, attr in g.edges.items():
         color = "k"
         k1, k2 = edge
         k1, k2 = get_fwd_id(k1), get_fwd_id(k2)
-        if reference_graph and not reference_graph.has_edge(k1, k2):
+
+        if attr.get("redundant", False):
+            color = LIGHT_GRAY
+        elif reference_graph is not None and not reference_graph.has_edge(k1, k2):
             color = RED
         else:
             color = GRAY
         edge_colors.append(color)
 
-    node_colors = [BLUE if x >= 0 else GREEN for x in g.nodes]
+    BLUE = (29 / 255, 89 / 255, 142 / 255, 1)
+    GREEN = (53 / 255, 125 / 255, 35 / 255, 1)
+    ORANGE = (252 / 255, 177 / 255, 3 / 255, 1)
 
-    if pos is None:
-        pos = get_graphviz_layout(query_graph, figsize=figsize, seed=seed)
+    # Node colors
+    node_colors = []
+    for node in g.nodes:
+        if len(g[node]) == 0:
+            color = ORANGE
+        elif metadata is None:
+            color = BLUE
+        elif metadata.at[node, "reference_strand"] == "+":
+            color = BLUE
+        elif metadata.at[node, "reference_strand"] == "-":
+            color = GREEN
+        node_colors.append(color)
 
+    # Layout
+    if layout_method == "umap":
+        pos = get_umap_layout(graph=g)
+    else:
+        pos = get_graphviz_layout(
+            graph=g, figsize=figsize, seed=seed, method=layout_method
+        )
+
+    # Plot
     nx.draw_networkx(
         g,
         ax=ax,
         pos=pos,
         with_labels=False,
-        node_size=6,
+        node_size=node_size,
         edge_color=edge_colors,
         node_color=node_colors,
     )
@@ -97,9 +139,11 @@ def plot_read_graph(
 def mp_plot_read_graphs(
     read_graphs: Sequence[ReadGraph],
     reference_graph: ReadGraph,
+    metadata: pd.DataFrame,
     *,
     layout_method="neato",
     figsize=(8, 6),
+    node_size=3,
     processes: int = 8,
 ):
 
@@ -112,15 +156,12 @@ def mp_plot_read_graphs(
             axes.append(ax)
 
         def work(i):
-            if layout_method == "neato":
-                pos = get_graphviz_layout(
-                    graph=read_graphs[i], figsize=figsize, seed=43
-                )
-            elif layout_method == "umap":
+            if layout_method == "umap":
                 pos = get_umap_layout(graph=read_graphs[i])
             else:
-                raise ValueError()
-
+                pos = get_graphviz_layout(
+                    graph=read_graphs[i], figsize=figsize, seed=43, method=layout_method
+                )
             return i, pos
 
         def reduce(i, pos):
@@ -129,7 +170,9 @@ def mp_plot_read_graphs(
                 ax=axes[i],
                 query_graph=read_graphs[i],
                 reference_graph=reference_graph,
+                metadata=metadata,
                 pos=pos,
+                node_size=node_size,
             )
 
         pool.map(work, range(len(read_graphs)), reduce=reduce)
