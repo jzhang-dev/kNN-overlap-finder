@@ -69,7 +69,9 @@ class NearestNeighborsConfig:
         n_neighbors=6,
         min_alignment_score=0,
         processes=8,
+        batch_size=200,
         _cache: dict = {},
+        **kw,
     ):
         if self.pre_align_graph is None:
             raise TypeError()
@@ -81,10 +83,11 @@ class NearestNeighborsConfig:
             align_kw=dict(max_cells=int(1e10)),
             traceback=False,
             processes=processes,
-            batch_size=200,
+            batch_size=batch_size,
             min_free_memory_gb=48,
             max_total_wait_seconds=600,
             _cache=_cache,
+            **kw,
         )
 
         graph = ReadGraph.from_pairwise_alignment(
@@ -106,6 +109,7 @@ def mp_evaluate_configs(
     *,
     post_align_n_neighbors=6,
     processes=8,
+    batch_size=200,
     alignment_pickle_path=None,
 ):
     data = feature_matrix
@@ -145,6 +149,7 @@ def mp_evaluate_configs(
             n_neighbors=post_align_n_neighbors,
             min_alignment_score=0,
             processes=processes,
+            batch_size=batch_size,
         )
         stats = config.post_align_stats
         if stats is None:

@@ -1,6 +1,6 @@
 REFERENCE_FASTA_PATH = dict(HG002="data/reference/HG002/hg002v1.0.1.fasta.gz",
                             CHM13="data/reference/CHM13/chm13v2.0.fa.gz")
-REGIONS = dict(TRA=("chr14", 14819498, 17749884))
+REGIONS = dict(TRA=("chr14", 14819498, 17749884), HLA=("chr6", 28476949, 34231258))
 
 
 wildcard_constraints:
@@ -139,3 +139,5 @@ rule test3:
 rule test4:
     input:
         "data/feature_matrix/kmer/CHM13/TRA/pbsim_ONT_90_30k/read_features.json.gz",
+        "data/feature_matrix/kmer/CHM13/TRA/pbsim_ONT_93_30k/read_features.json.gz",
+        "data/feature_matrix/kmer/CHM13/HLA/pbsim_ONT_93_30k/read_features.json.gz",

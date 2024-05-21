@@ -41,7 +41,7 @@ def main(snakemake: "SnakemakeContext"):
     sequence = extract_region(fasta_file, chromosome, start, end)
 
     with gzip.open(snakemake.output["fasta"], "wt") as f:
-        f.write(f">Extracted_region:{chromosome}:{start}-{end}\n")
+        f.write(f">{chromosome}_{start}_{end}\n")
         f.write(sequence + "\n")  # # type: ignore
 
 

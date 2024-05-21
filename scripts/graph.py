@@ -146,7 +146,7 @@ class ReadGraph(nx.Graph):
         read_features,
         feature_weights,
         aligner: Type[_PairwiseAligner],
-        traceback:bool = True,
+        traceback: bool = True,
         align_kw={},
         *,
         processes=4,
@@ -169,7 +169,9 @@ class ReadGraph(nx.Graph):
 
 
 def get_read_graph_statistics(query_graph: ReadGraph, reference_graph: ReadGraph):
-    reference_edges = set(reference_graph.edges)
+    reference_edges = set(
+        tuple(sorted((node_1, node_2))) for node_1, node_2 in reference_graph.edges
+    )
     nr_reference_edges = set(
         tuple(sorted((node_1, node_2)))
         for node_1, node_2, data in reference_graph.edges(data=True)
@@ -187,12 +189,19 @@ def get_read_graph_statistics(query_graph: ReadGraph, reference_graph: ReadGraph
     precision = len(true_positive_edges) / len(query_edges)
     nr_precision = len(nr_true_positive_edges) / len(query_edges)
 
+    singleton_count = len([node for node in query_graph if len(query_graph[node]) <= 1])
+    component_sizes = [len(x) for x in nx.connected_components(query_graph)]
+    component_sizes.sort(reverse=True)
+    component_sizes = np.array(component_sizes)
+    node_count = len(query_graph.nodes)
+    N50 = component_sizes[component_sizes.cumsum() >= node_count * 0.5].max()
+
     result = dict(
         precision=precision,
         nr_precision=nr_precision,
         recall=recall,
         nr_recall=nr_recall,
+        singleton_count=singleton_count,
+        N50=N50,
     )
     return result
-
-

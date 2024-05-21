@@ -9,9 +9,6 @@ from typing import Sequence, Collection, Mapping, Any, Type, MutableMapping
 import psutil
 import numpy as np
 import sharedmem
-import matplotlib.pyplot as plt
-from matplotlib.patches import Rectangle
-from matplotlib.collections import LineCollection
 
 
 import sys, os
@@ -20,10 +17,6 @@ lib_dir = os.path.join(current_dir, "..", "lib")
 print(lib_dir)
 sys.path.append(lib_dir)
 import Aligner as cAligner  # type: ignore
-
-
-def get_new_element():
-    return 0
 
 
 @dataclass(init=False)
@@ -297,6 +290,7 @@ def run_multiprocess_alignment(
         mean_step_wait_seconds = processes
 
     if _cache is not None:
+        
         cached_candidates = set(_cache) & set(candidates)
         if traceback:
             invalid_cache = set()
@@ -305,7 +299,10 @@ def run_multiprocess_alignment(
                 if cached_result.score > 0 and not cached_result.has_traceback:
                     invalid_cache.add(x)
             cached_candidates -= invalid_cache
-        candidates = list(set(candidates) - cached_candidates)
+        new_candidates = list(set(candidates) - cached_candidates)
+        if verbose:
+            print(f"{len(candidates)=}\t{len(cached_candidates)=}\t{len(new_candidates)=}")
+        candidates = new_candidates
 
     if shuffle:
         candidates = list(candidates).copy()
