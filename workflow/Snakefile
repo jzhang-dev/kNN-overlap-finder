@@ -114,6 +114,21 @@ rule kmer_encoding:
     script: "scripts/kmer_encoding.smk.py"
 
 
+rule run_minimap2_ava:
+    input:
+        fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
+    output:
+        gaf="data/minimap2/{sample}/{region}/{platform}/alignment.gaf.gz",
+    params:
+        preset="ava-ont"
+    conda: "envs/minimap2.yaml"
+    threads: 8
+    shell:
+        """
+        minimap2 -x {params.preset} -t {threads} {input.fasta} {input.fasta} | gzip -c > {output.gaf}
+        """
+    
+
 
 
 # ----------------------------------------------------------------------------------------------------
@@ -141,3 +156,9 @@ rule test4:
         "data/feature_matrix/kmer/CHM13/TRA/pbsim_ONT_90_30k/read_features.json.gz",
         "data/feature_matrix/kmer/CHM13/TRA/pbsim_ONT_93_30k/read_features.json.gz",
         "data/feature_matrix/kmer/CHM13/HLA/pbsim_ONT_93_30k/read_features.json.gz",
+
+
+rule test5:
+    input:
+        "data/minimap2/CHM13/HLA/pbsim_ONT_93_30k/alignment.gaf.gz"
+    

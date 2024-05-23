@@ -1,7 +1,9 @@
 from dataclasses import dataclass, field
+import hashlib
 from functools import lru_cache
 import collections
-from typing import Sequence, Type
+from typing import Sequence, Type, Mapping
+from warnings import warn
 from math import ceil
 from scipy import sparse
 from scipy.sparse._csr import csr_matrix
@@ -10,6 +12,9 @@ from numpy import matlib
 import sklearn.neighbors
 import pynndescent
 from sklearn.feature_extraction.text import TfidfTransformer
+
+
+from data_io import parse_paf_file, get_sibling_id
 
 
 def get_marker_matrix(
@@ -89,83 +94,83 @@ class NNDescent(_NearestNeighbors):
         return nbr_indices
 
 
-class WeightedLowHash(_NearestNeighbors):
+class LowHash(_NearestNeighbors):
 
-    def _pcws_low_hash(
-        self, lowhash_fraction, repeats=1, *, seed=1, verbose=True
+    @staticmethod
+    def _hash(x: int, *, hash_function="sha256", max_hash_value=2**64) -> int:
+        # Convert the integer to a string
+        input_string = str(x)
+
+        # Select the hash function
+        hasher = hashlib.new(hash_function)
+
+        # Update the hasher with the string-encoded integer
+        hasher.update(input_string.encode("utf-8"))
+
+        # Get the hexadecimal digest of the hash
+        hex_digest = hasher.hexdigest()
+
+        # Convert the hexadecimal digest to an integer
+        hash_value = int(hex_digest, 16) % max_hash_value
+
+        return hash_value
+
+    def _lowhash(
+        self, repeats: int, lowhash_fraction: float | None, seed: int, verbose=True
     ) -> csr_matrix:
-        data = self.data.T  # rows for features; columns for instances
-        feature_num, instance_num = data.shape
-        lowhash_buckets = sparse.dok_matrix(
-            (feature_num * repeats, instance_num), dtype=np.bool_
+        data = self.data
+        sample_count, feature_count = data.shape
+        buckets = sparse.dok_matrix(
+            (feature_count * repeats, sample_count), dtype=np.bool_
         )
 
-        dimension_num = repeats
-        # fingerprints_k = np.zeros((instance_num, dimension_num))
-
+        # Calculate hash values
         rng = np.random.default_rng(seed)
-        beta = rng.uniform(0, 1, (feature_num, dimension_num))
-        x = rng.uniform(0, 1, (feature_num, dimension_num))
-        u1 = rng.uniform(0, 1, (feature_num, dimension_num))
-        u2 = rng.uniform(0, 1, (feature_num, dimension_num))
-
-        for j_sample in range(0, instance_num):
-            feature_id = sparse.find(data[:, j_sample] > 0)[0]
-            gamma = -np.log(np.multiply(u1[feature_id, :], u2[feature_id, :]))
-            t_matrix = np.floor(
-                np.divide(
-                    matlib.repmat(
-                        np.log(data[feature_id, j_sample].todense()), 1, dimension_num
-                    ),
-                    gamma,
-                )
-                + beta[feature_id, :]
-            )
-            y_matrix = np.exp(np.multiply(gamma, t_matrix - beta[feature_id, :]))
-            a_matrix = np.divide(
-                -np.log(x[feature_id, :]), np.divide(y_matrix, u1[feature_id, :])
-            )
-
-            lowhash_count = ceil(feature_id.shape[0] * lowhash_fraction)
-            lowhash_positions = np.argsort(a_matrix, axis=0)[:lowhash_count]
-            lowhash_features = feature_id[lowhash_positions]
-
-            bucket_indices = []
-            for k in range(repeats):
-                features = lowhash_features[:, k]
-                bucket_indices.append(features + k * feature_num)
-
-            lowhash_buckets[np.concatenate(bucket_indices), j_sample] = 1
-
-            if verbose and j_sample % 1_000 == 0:
-                print(j_sample, end=" ")
-
-        lowhash_buckets = sparse.csr_matrix(lowhash_buckets)
-        return lowhash_buckets
-
-    def get_neighbors(
-        self,
-        n_neighbors: int = 20,
-        lowhash_fraction=0.1,
-        repeats=50,
-        min_bucket_size=2,
-        max_bucket_size=float("inf"),
-        min_cooccurence_count=1,
-        *,
-        seed=1,
-        verbose=True,
-    ) -> np.ndarray:
-        # Calculate LowHash
-        lowhash_buckets = self._pcws_low_hash(
-            lowhash_fraction=lowhash_fraction,
-            repeats=repeats,
-            seed=seed,
-            verbose=verbose,
+        max_hash_value = 2**64 - 1
+        offsets = rng.integers(
+            low=0, high=max_hash_value, size=buckets.shape[0], dtype=np.uint64
         )
+        hash_values = [
+            self._hash(i + offsets[i], max_hash_value=max_hash_value)
+            for i in range(buckets.shape[0])
+        ]
+        hash_values = np.array(hash_values, dtype=np.uint64)
+
+        # For each sample, find the lowest hash values for its features
+        for j in range(sample_count):
+            feature_indices = sparse.find(data[j, :] > 0)[1]
+            if lowhash_fraction is None:
+                # When lowhash_fraction = 0，LowHash = MinHash
+                lowhash_count = 1
+            else:
+                lowhash_count = ceil(feature_indices.shape[0] * lowhash_fraction)
+                lowhash_count = max(lowhash_count, 1)
+            for k in range(repeats):
+                bucket_indices = feature_indices + (k * feature_count)
+                sample_hash_values = hash_values[bucket_indices]
+                low_hash_buckets = bucket_indices[
+                    np.argsort(sample_hash_values)[:lowhash_count]
+                ]
+                buckets[low_hash_buckets, j] = 1
+            if verbose and j % 1000 == 0:
+                print(j, end=" ")
+        if verbose:
+            print("")
+        buckets = sparse.csr_matrix(buckets)
+        return buckets
+
+    def _get_adjacency_matrix(
+        self,
+        buckets: csr_matrix,
+        n_neighbors: int,
+        min_bucket_size,
+        max_bucket_size,
+        min_cooccurence_count,
+    ) -> np.ndarray:
 
         # Select neighbor candidates based on cooccurence counts
-        row_sums = lowhash_buckets.sum(axis=1).A1  # type: ignore
-        matrix = lowhash_buckets[
+        row_sums = buckets.sum(axis=1).A1  # type: ignore
+        matrix = buckets[
             (row_sums >= min_bucket_size) & (row_sums <= max_bucket_size), :
         ].astype(np.uint8)
         cooccurrence_matrix = matrix.T.dot(matrix)
@@ -196,5 +201,165 @@ class WeightedLowHash(_NearestNeighbors):
             nbr_matrix[i, : len(neighbors)] = neighbors
         return nbr_matrix
 
+    def get_neighbors(
+        self,
+        n_neighbors: int = 20,
+        lowhash_fraction: float = 0.01,
+        repeats=100,
+        min_bucket_size=2,
+        max_bucket_size=float("inf"),
+        min_cooccurence_count=1,
+        *,
+        seed=1,
+        verbose=True,
+    ) -> np.ndarray:
+
+        buckets = self._lowhash(
+            repeats=repeats,
+            lowhash_fraction=lowhash_fraction,
+            seed=seed,
+            verbose=verbose,
+        )
+        nbr_matrix = self._get_adjacency_matrix(
+            buckets,
+            n_neighbors=n_neighbors,
+            min_bucket_size=min_bucket_size,
+            max_bucket_size=max_bucket_size,
+            min_cooccurence_count=min_cooccurence_count,
+        )
+        return nbr_matrix
 
 
+class WeightedLowHash(LowHash):
+
+    def _pcws_low_hash(
+        self, lowhash_fraction, repeats=1, *, seed=1, use_weights=True, verbose=True
+    ) -> csr_matrix:
+        data = self.data.T  # rows for features; columns for instances
+        if not use_weights:
+            data[data > 0] = 1
+        feature_count, sample_count = data.shape
+        lowhash_buckets = sparse.dok_matrix(
+            (feature_count * repeats, sample_count), dtype=np.bool_
+        )
+
+        dimension_num = repeats
+        # fingerprints_k = np.zeros((instance_num, dimension_num))
+
+        rng = np.random.default_rng(seed)
+        beta = rng.uniform(0, 1, (feature_count, dimension_num))
+        x = rng.uniform(0, 1, (feature_count, dimension_num))
+        u1 = rng.uniform(0, 1, (feature_count, dimension_num))
+        u2 = rng.uniform(0, 1, (feature_count, dimension_num))
+
+        for j_sample in range(0, sample_count):
+            feature_id = sparse.find(data[:, j_sample] > 0)[0]
+            gamma = -np.log(np.multiply(u1[feature_id, :], u2[feature_id, :]))
+            t_matrix = np.floor(
+                np.divide(
+                    matlib.repmat(
+                        np.log(data[feature_id, j_sample].todense()), 1, dimension_num
+                    ),
+                    gamma,
+                )
+                + beta[feature_id, :]
+            )
+            y_matrix = np.exp(np.multiply(gamma, t_matrix - beta[feature_id, :]))
+            a_matrix = np.divide(
+                -np.log(x[feature_id, :]), np.divide(y_matrix, u1[feature_id, :])
+            )
+
+            lowhash_count = ceil(feature_id.shape[0] * lowhash_fraction)
+            lowhash_positions = np.argsort(a_matrix, axis=0)[:lowhash_count]
+            lowhash_features = feature_id[lowhash_positions]
+
+            bucket_indices = []
+            for k in range(repeats):
+                features = lowhash_features[:, k]
+                bucket_indices.append(features + k * feature_count)
+
+            lowhash_buckets[np.concatenate(bucket_indices), j_sample] = 1
+
+            if verbose and j_sample % 1_000 == 0:
+                print(j_sample, end=" ")
+        if verbose:
+            print("")
+        lowhash_buckets = sparse.csr_matrix(lowhash_buckets)
+        return lowhash_buckets
+
+    def get_neighbors(
+        self,
+        n_neighbors: int = 20,
+        lowhash_fraction: float = 0.01,
+        repeats=100,
+        min_bucket_size=2,
+        max_bucket_size=float("inf"),
+        min_cooccurence_count=1,
+        *,
+        seed=1,
+        use_weights=True,
+        verbose=True,
+    ) -> np.ndarray:
+
+        buckets = self._pcws_low_hash(
+            repeats=repeats,
+            lowhash_fraction=lowhash_fraction,
+            seed=seed,
+            use_weights=use_weights,
+            verbose=verbose,
+        )
+        nbr_matrix = self._get_adjacency_matrix(
+            buckets,
+            n_neighbors=n_neighbors,
+            min_bucket_size=min_bucket_size,
+            max_bucket_size=max_bucket_size,
+            min_cooccurence_count=min_cooccurence_count,
+        )
+        return nbr_matrix
+
+
+class PAFNearestNeighbors(_NearestNeighbors):
+    def get_neighbors(
+        self,
+        n_neighbors: int,
+        paf_path: str,
+        read_indices: Mapping[str, int],
+        *,
+        min_alignment_length: int = 0,
+    ) -> np.ndarray:
+        # Calculate cumulative alignment lengths
+        alignment_lengths = collections.defaultdict(collections.Counter)
+        for record in parse_paf_file(paf_path):
+            k1 = read_indices.get(record.query_name)
+            k2 = read_indices.get(record.target_name)
+            if k1 is None or k2 is None:
+                # Assume query or target is excluded
+                continue
+            if k1 == k2:
+                continue
+            if record.strand == "-":
+                k1 = get_sibling_id(k1)
+            length = record.alignment_block_length
+            alignment_lengths[k1][k2] += length
+            alignment_lengths[k2][k1] += length
+            k1, k2 = get_sibling_id(k1), get_sibling_id(k2)
+            alignment_lengths[k1][k2] += length
+            alignment_lengths[k2][k1] += length
+        if len(alignment_lengths) == 0:
+            warn(f"No overlaps found from {paf_path}")
+
+        # Construct neighbor matrix
+        n_rows = self.data.shape[0]
+        nbr_matrix = np.empty((n_rows, n_neighbors), dtype=np.int64)
+        nbr_matrix[:, :] = -1
+        for i in range(n_rows):
+            row_nbr_dict = {
+                j: length
+                for j, length in alignment_lengths[i].items()
+                if length >= min_alignment_length
+            }
+            neighbors = list(
+                sorted(row_nbr_dict, key=lambda x: row_nbr_dict[x], reverse=True)
+            )[:n_neighbors]
+            nbr_matrix[i, : len(neighbors)] = neighbors
+        return nbr_matrix

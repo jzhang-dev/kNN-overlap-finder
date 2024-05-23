@@ -9,7 +9,7 @@ import networkx as nx
 from intervaltree import Interval, IntervalTree
 
 
-from data_io import get_sibling_id, get_fwd_id
+from data_io import get_sibling_id, get_fwd_id, parse_paf_file
 from align import _PairwiseAligner, run_multiprocess_alignment, AlignmentResult
 
 
@@ -140,6 +140,8 @@ class ReadGraph(nx.Graph):
                 graph[node_0][nearest_right_node]["redundant"] = False
 
         return graph
+
+
 
     def align_edges(
         self,

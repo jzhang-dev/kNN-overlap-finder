@@ -122,24 +122,26 @@ def mp_evaluate_configs(
         alignment_dict = {}
     initial_alignment_count = len(alignment_dict)
 
-    config_list = configs
-    for config in config_list:
-        print(config)
-        config.compute_pre_alignment_graph(
-            data=data, reference_graph=reference_graph, read_ids=list(read_features)
-        )
-        stats = config.pre_align_stats
+    def print_stats(stats):
         if stats is None:
             raise TypeError()
         print(
-            "\n",
-            "Pre-alignment:",
             f"precision={stats['precision']:.3f}",
             f"nr_precision={stats['nr_precision']:.3f}",
             f"recall={stats['recall']:.3f}",
             f"nr_recall={stats['nr_recall']:.3f}",
             "\n",
         )
+
+    config_list = configs
+    for config in config_list:
+        print(config)
+        config.compute_pre_alignment_graph(
+            data=data, reference_graph=reference_graph, read_ids=list(read_features)
+        )
+
+        print("Pre-alignment:")
+        print_stats(config.pre_align_stats)
 
         config.compute_post_alignment_graph(
             reference_graph=reference_graph,
@@ -151,18 +153,9 @@ def mp_evaluate_configs(
             processes=processes,
             batch_size=batch_size,
         )
-        stats = config.post_align_stats
-        if stats is None:
-            raise TypeError()
-        print(
-            "\n",
-            "Post-alignment:",
-            f"precision={stats['precision']:.3f}",
-            f"nr_precision={stats['nr_precision']:.3f}",
-            f"recall={stats['recall']:.3f}",
-            f"nr_recall={stats['nr_recall']:.3f}",
-            "\n",
-        )
+
+        print("Post-alignment:")
+        print_stats(config.post_align_stats)
 
     if pickle_file is not None and len(alignment_dict) > initial_alignment_count:
         with gzip.open(pickle_file, "wb") as f:

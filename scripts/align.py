@@ -377,7 +377,8 @@ def run_multiprocess_alignment(
             print(e)
             unfinished = (alignment_scores == -1).nonzero()[0].tolist()
             raise RuntimeError(f"Alignment failed. Unfinished: {unfinished}")
-    
+    if verbose:
+        print("")
     if _cache is not None:
         alignment_dict.update({x: _cache[x] for x in cached_candidates})
     if _update_cache and candidate_count > 0 and _cache is not None:
