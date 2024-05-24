@@ -1,8 +1,8 @@
 from dataclasses import dataclass, field
-import hashlib
+import mmh3
 from functools import lru_cache
 import collections
-from typing import Sequence, Type, Mapping
+from typing import Sequence, Type, Mapping, Iterable
 from warnings import warn
 from math import ceil
 from scipy import sparse
@@ -97,23 +97,21 @@ class NNDescent(_NearestNeighbors):
 class LowHash(_NearestNeighbors):
 
     @staticmethod
-    def _hash(x: int, *, hash_function="sha256", max_hash_value=2**64) -> int:
-        # Convert the integer to a string
-        input_string = str(x)
-
-        # Select the hash function
-        hasher = hashlib.new(hash_function)
-
-        # Update the hasher with the string-encoded integer
-        hasher.update(input_string.encode("utf-8"))
-
-        # Get the hexadecimal digest of the hash
-        hex_digest = hasher.hexdigest()
-
-        # Convert the hexadecimal digest to an integer
-        hash_value = int(hex_digest, 16) % max_hash_value
-
+    def _hash(x: int, seed: int) -> int:
+        hash_value = mmh3.hash(str(x), seed=seed)
         return hash_value
+
+    @staticmethod
+    def _get_hash_values(data: Iterable[int], repeats: int, seed: int) -> np.ndarray:
+        rng = np.random.default_rng(seed)
+        hash_seeds = rng.integers(low=0, high=2**32 - 1, size=repeats, dtype=np.uint64)
+        hash_values = []
+        for k in range(repeats):
+            s = hash_seeds[k]
+            for x in data:
+                hash_values.append(LowHash._hash(x, seed=s))
+        hash_values = np.array(hash_values, dtype=np.int64)
+        return hash_values
 
     def _lowhash(
         self, repeats: int, lowhash_fraction: float | None, seed: int, verbose=True
@@ -125,16 +123,9 @@ class LowHash(_NearestNeighbors):
         )
 
         # Calculate hash values
-        rng = np.random.default_rng(seed)
-        max_hash_value = 2**64 - 1
-        offsets = rng.integers(
-            low=0, high=max_hash_value, size=buckets.shape[0], dtype=np.uint64
+        hash_values = self._get_hash_values(
+            np.arange(feature_count), repeats=repeats, seed=seed
         )
-        hash_values = [
-            self._hash(i + offsets[i], max_hash_value=max_hash_value)
-            for i in range(buckets.shape[0])
-        ]
-        hash_values = np.array(hash_values, dtype=np.uint64)
 
         # For each sample, find the lowest hash values for its features
         for j in range(sample_count):
@@ -330,21 +321,21 @@ class PAFNearestNeighbors(_NearestNeighbors):
         # Calculate cumulative alignment lengths
         alignment_lengths = collections.defaultdict(collections.Counter)
         for record in parse_paf_file(paf_path):
-            k1 = read_indices.get(record.query_name)
-            k2 = read_indices.get(record.target_name)
-            if k1 is None or k2 is None:
+            i1 = read_indices.get(record.query_name)
+            i2 = read_indices.get(record.target_name)
+            if i1 is None or i2 is None:
                 # Assume query or target is excluded
                 continue
-            if k1 == k2:
+            if i1 == i2:
                 continue
             if record.strand == "-":
-                k1 = get_sibling_id(k1)
+                i1 = get_sibling_id(i1)
             length = record.alignment_block_length
-            alignment_lengths[k1][k2] += length
-            alignment_lengths[k2][k1] += length
-            k1, k2 = get_sibling_id(k1), get_sibling_id(k2)
-            alignment_lengths[k1][k2] += length
-            alignment_lengths[k2][k1] += length
+            alignment_lengths[i1][i2] += length
+            alignment_lengths[i2][i1] += length
+            i1, i2 = get_sibling_id(i1), get_sibling_id(i2)
+            alignment_lengths[i1][i2] += length
+            alignment_lengths[i2][i1] += length
         if len(alignment_lengths) == 0:
             warn(f"No overlaps found from {paf_path}")
 

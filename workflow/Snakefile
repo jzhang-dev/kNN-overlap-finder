@@ -50,6 +50,7 @@ rule run_pbsim3:
         accuracy=lambda wildcards: float(wildcards['accuracy']) / 100,
         length_mean=lambda wildcards: int(wildcards['length_kb']) * 1000,
         length_sd=lambda wildcards: int(wildcards['length_kb']) * 500,
+        length_min=10_000,
         depth=30,
         seed=5023967
     conda: "envs/pbsim.yaml"
@@ -64,6 +65,7 @@ rule run_pbsim3:
             --accuracy-mean {params.accuracy} \
             --length-mean {params.length_mean} \
             --length-sd  {params.length_sd} \
+            --length-min {params.length_min} \
             --genome /dev/stdin \
             --seed {params.seed} \
             --prefix {output.folder}/output
@@ -109,7 +111,7 @@ rule kmer_encoding:
     params:
         k = 10,
         sample_fraction=0.05,
-        seed=562104830
+        seed=562104830,
     conda: 'envs/default.yaml'
     script: "scripts/kmer_encoding.smk.py"
 
@@ -153,12 +155,12 @@ rule test3:
 
 rule test4:
     input:
-        "data/feature_matrix/kmer/CHM13/TRA/pbsim_ONT_90_30k/read_features.json.gz",
-        "data/feature_matrix/kmer/CHM13/TRA/pbsim_ONT_93_30k/read_features.json.gz",
         "data/feature_matrix/kmer/CHM13/HLA/pbsim_ONT_93_30k/read_features.json.gz",
 
 
 rule test5:
     input:
-        "data/minimap2/CHM13/HLA/pbsim_ONT_93_30k/alignment.gaf.gz"
-    
+        "data/minimap2/CHM13/HLA/pbsim_ONT_93_30k/alignment.gaf.gz",
+        "data/feature_matrix/kmer/CHM13/HLA/pbsim_ONT_93_30k/read_features.json.gz",
+
+

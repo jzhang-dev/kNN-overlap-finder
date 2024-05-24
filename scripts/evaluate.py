@@ -5,6 +5,7 @@ from scipy.sparse._csr import csr_matrix
 from typing import Sequence, Type, Mapping
 from dataclasses import dataclass, field
 import numpy as np
+import sharedmem
 
 from nearest_neighbors import _NearestNeighbors
 from dim_reduction import SpectralMatrixFree
@@ -107,6 +108,7 @@ def mp_evaluate_configs(
     feature_weights: Mapping[int, int],
     reference_graph: ReadGraph,
     *,
+    pairwise_alignment=True,
     post_align_n_neighbors=6,
     processes=8,
     batch_size=200,
@@ -114,13 +116,7 @@ def mp_evaluate_configs(
 ):
     data = feature_matrix
     pickle_file = alignment_pickle_path
-
-    if pickle_file is not None and os.path.isfile(pickle_file):
-        with gzip.open(pickle_file, "rb") as f:
-            alignment_dict = pickle.load(f)  # type:ignore
-    else:
-        alignment_dict = {}
-    initial_alignment_count = len(alignment_dict)
+    configs = list(configs)
 
     def print_stats(stats):
         if stats is None:
@@ -133,16 +129,37 @@ def mp_evaluate_configs(
             "\n",
         )
 
-    config_list = configs
-    for config in config_list:
-        print(config)
-        config.compute_pre_alignment_graph(
-            data=data, reference_graph=reference_graph, read_ids=list(read_features)
-        )
+    # Nearest neighbors
+    with sharedmem.MapReduce(np=processes) as pool:
 
-        print("Pre-alignment:")
-        print_stats(config.pre_align_stats)
+        def work(i):
+            config = configs[i]
+            config.compute_pre_alignment_graph(
+                data=data, reference_graph=reference_graph, read_ids=list(read_features)
+            )
+            return i, config
 
+        def reduce(i, config):
+            configs[i] = config
+            print(config)
+            print("Pre-alignment:")
+            print_stats(config.pre_align_stats)
+
+        pool.map(work, range(len(configs)), reduce=reduce)
+
+
+    # Pairwise alignment
+    if not pairwise_alignment:
+        return configs
+    
+    if pickle_file is not None and os.path.isfile(pickle_file):
+        with gzip.open(pickle_file, "rb") as f:
+            alignment_dict = pickle.load(f)  # type:ignore
+    else:
+        alignment_dict = {}
+    initial_alignment_count = len(alignment_dict)
+
+    for config in configs:
         config.compute_post_alignment_graph(
             reference_graph=reference_graph,
             _cache=alignment_dict,
@@ -153,10 +170,12 @@ def mp_evaluate_configs(
             processes=processes,
             batch_size=batch_size,
         )
-
+        print(config)
         print("Post-alignment:")
         print_stats(config.post_align_stats)
 
     if pickle_file is not None and len(alignment_dict) > initial_alignment_count:
         with gzip.open(pickle_file, "wb") as f:
             pickle.dump(alignment_dict, f)  # type: ignore
+
+    return configs

@@ -35,6 +35,7 @@ def encode_reads(
     fasta_path: str,
     info_path: str,
     k,
+    *,
     sample_fraction: float,
     seed: int,
     include_reverse_complement=True,
