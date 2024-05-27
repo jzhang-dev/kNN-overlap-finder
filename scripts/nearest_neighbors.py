@@ -113,9 +113,37 @@ class LowHash(_NearestNeighbors):
         hash_values = np.array(hash_values, dtype=np.int64)
         return hash_values
 
+    @staticmethod
+    def _get_lowhash_count(
+        hash_count: int,
+        lowhash_fraction: float | None,
+        lowhash_count: int | None = None,
+    ) -> int:
+        if lowhash_fraction is None and lowhash_count is None:
+            raise TypeError(
+                "Either `lowhash_fraction` or `lowhash_count` must be specified."
+            )
+        if lowhash_fraction is not None and lowhash_count is not None:
+            raise TypeError(
+                "`lowhash_fraction` and `lowhash_count` cannot be specified at the same time."
+            )
+
+        if lowhash_fraction is not None:
+            lowhash_count = ceil(hash_count * lowhash_fraction)
+            lowhash_count = max(lowhash_count, 1)
+        if lowhash_count is None:
+            raise ValueError()
+        return lowhash_count
+
     def _lowhash(
-        self, repeats: int, lowhash_fraction: float | None, seed: int, verbose=True
+        self,
+        repeats: int,
+        lowhash_fraction: float | None,
+        lowhash_count: int | None = None,
+        seed: int = 5731343,
+        verbose=True,
     ) -> csr_matrix:
+
         data = self.data
         sample_count, feature_count = data.shape
         buckets = sparse.dok_matrix(
@@ -130,12 +158,12 @@ class LowHash(_NearestNeighbors):
         # For each sample, find the lowest hash values for its features
         for j in range(sample_count):
             feature_indices = sparse.find(data[j, :] > 0)[1]
-            if lowhash_fraction is None:
-                # When lowhash_fraction = 0，LowHash = MinHash
-                lowhash_count = 1
-            else:
-                lowhash_count = ceil(feature_indices.shape[0] * lowhash_fraction)
-                lowhash_count = max(lowhash_count, 1)
+            hash_count = feature_indices.shape[0]
+            lowhash_count = self._get_lowhash_count(
+                hash_count=hash_count,
+                lowhash_fraction=lowhash_fraction,
+                lowhash_count=lowhash_count,
+            )
             for k in range(repeats):
                 bucket_indices = feature_indices + (k * feature_count)
                 sample_hash_values = hash_values[bucket_indices]
@@ -224,9 +252,16 @@ class LowHash(_NearestNeighbors):
 class WeightedLowHash(LowHash):
 
     def _pcws_low_hash(
-        self, lowhash_fraction, repeats=1, *, seed=1, use_weights=True, verbose=True
+        self,
+        lowhash_fraction: float | None,
+        lowhash_count: int | None = None,
+        repeats=1,
+        *,
+        seed=1,
+        use_weights=True,
+        verbose=True,
     ) -> csr_matrix:
-        data = self.data.T  # rows for features; columns for instances
+        data = self.data.T.copy()  # rows for features; columns for instances
         if not use_weights:
             data[data > 0] = 1
         feature_count, sample_count = data.shape
@@ -244,25 +279,30 @@ class WeightedLowHash(LowHash):
         u2 = rng.uniform(0, 1, (feature_count, dimension_num))
 
         for j_sample in range(0, sample_count):
-            feature_id = sparse.find(data[:, j_sample] > 0)[0]
-            gamma = -np.log(np.multiply(u1[feature_id, :], u2[feature_id, :]))
+            feature_indices = sparse.find(data[:, j_sample] > 0)[0]
+            gamma = -np.log(np.multiply(u1[feature_indices, :], u2[feature_indices, :]))
             t_matrix = np.floor(
                 np.divide(
                     matlib.repmat(
-                        np.log(data[feature_id, j_sample].todense()), 1, dimension_num
+                        np.log(data[feature_indices, j_sample].todense()), 1, dimension_num
                     ),
                     gamma,
                 )
-                + beta[feature_id, :]
+                + beta[feature_indices, :]
             )
-            y_matrix = np.exp(np.multiply(gamma, t_matrix - beta[feature_id, :]))
+            y_matrix = np.exp(np.multiply(gamma, t_matrix - beta[feature_indices, :]))
             a_matrix = np.divide(
-                -np.log(x[feature_id, :]), np.divide(y_matrix, u1[feature_id, :])
+                -np.log(x[feature_indices, :]), np.divide(y_matrix, u1[feature_indices, :])
             )
 
-            lowhash_count = ceil(feature_id.shape[0] * lowhash_fraction)
+            hash_count = feature_indices.shape[0]
+            lowhash_count = self._get_lowhash_count(
+                hash_count=hash_count,
+                lowhash_fraction=lowhash_fraction,
+                lowhash_count=lowhash_count,
+            )
             lowhash_positions = np.argsort(a_matrix, axis=0)[:lowhash_count]
-            lowhash_features = feature_id[lowhash_positions]
+            lowhash_features = feature_indices[lowhash_positions]
 
             bucket_indices = []
             for k in range(repeats):
@@ -281,7 +321,8 @@ class WeightedLowHash(LowHash):
     def get_neighbors(
         self,
         n_neighbors: int = 20,
-        lowhash_fraction: float = 0.01,
+        lowhash_fraction: float | None = 0.01,
+        lowhash_count: int | None = None,
         repeats=100,
         min_bucket_size=2,
         max_bucket_size=float("inf"),
@@ -295,6 +336,7 @@ class WeightedLowHash(LowHash):
         buckets = self._pcws_low_hash(
             repeats=repeats,
             lowhash_fraction=lowhash_fraction,
+            lowhash_count=lowhash_count,
             seed=seed,
             use_weights=use_weights,
             verbose=verbose,
