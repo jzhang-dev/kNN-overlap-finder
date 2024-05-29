@@ -1,22 +1,30 @@
-REFERENCE_FASTA_PATH = dict(HG002="data/reference/HG002/hg002v1.0.1.fasta.gz",
-                            CHM13="data/reference/CHM13/chm13v2.0.fa.gz")
-REGIONS = dict(TRA=("chr14", 14819498, 17749884), HLA=("chr6", 28476949, 34231258))
+REFERENCE_FASTA_PATH = dict(
+    HG002="data/reference/HG002/hg002v1.0.1.fasta.gz",
+    CHM13="data/reference/CHM13/chm13v2.0.fa.gz",
+)
+REGIONS = dict(
+    TRA=("chr14", 14819498, 17749884),
+    HLA=("chr6", 28476949, 34231258),
+    IGK=("chr2", 87866370, 91790947),
+    IGH=("chr14", 98839469, 101161492),
+)
 
 
 wildcard_constraints:
-    length_kb=r"\d+"
+    length_kb=r"\d+",
+
 
 rule extract_regional_reference:
     input:
-        fasta=lambda wildcards: REFERENCE_FASTA_PATH[wildcards['sample']],
+        fasta=lambda wildcards: REFERENCE_FASTA_PATH[wildcards["sample"]],
     output:
         fasta="data/regional_reference/{sample}/{region}/reference.fasta.gz",
     params:
-        region=lambda wildcards: REGIONS[wildcards['region']]
-    conda: 'envs/default.yaml'
-    script: "scripts/extract_regional_reference.smk.py"
-
-
+        region=lambda wildcards: REGIONS[wildcards["region"]],
+    conda:
+        "envs/default.yaml"
+    script:
+        "scripts/extract_regional_reference.smk.py"
 
 
 rule simulate_perfect_sequencing_reads:
@@ -25,14 +33,15 @@ rule simulate_perfect_sequencing_reads:
     output:
         fasta="data/regional_reads/{sample}/{region}/perfect_{length_kb}k/reads.fasta.gz",
     params:
-        length_kb=lambda wildcards: int(wildcards['length_kb']),
+        length_kb=lambda wildcards: int(wildcards["length_kb"]),
         depth=30,
-        seed=3558929
+        seed=3558929,
     wildcard_constraints:
         length_kb=r"\d+",
-    conda: 'envs/default.yaml'
-    script: "scripts/simulate_perfect_sequencing_reads.smk.py"
-    
+    conda:
+        "envs/default.yaml"
+    script:
+        "scripts/simulate_perfect_sequencing_reads.smk.py"
 
 
 rule run_pbsim3:
@@ -40,20 +49,23 @@ rule run_pbsim3:
         reference="data/regional_reference/{sample}/{region}/reference.fasta.gz",
         model="resources/pbsim/ERRHMM-ONT-HQ.model",
     output:
-        folder=directory("data/regional_reads/{sample}/{region}/pbsim_ONT_{accuracy}_{length_kb}k"),
+        folder=directory(
+            "data/regional_reads/{sample}/{region}/pbsim_ONT_{accuracy}_{length_kb}k"
+        ),
         fasta="data/regional_reads/{sample}/{region}/pbsim_ONT_{accuracy}_{length_kb}k/reads.fasta.gz",
         maf="data/regional_reads/{sample}/{region}/pbsim_ONT_{accuracy}_{length_kb}k/alignment.maf.gz",
     wildcard_constraints:
         accuracy=r"\d+",
         length_kb=r"\d+",
     params:
-        accuracy=lambda wildcards: float(wildcards['accuracy']) / 100,
-        length_mean=lambda wildcards: int(wildcards['length_kb']) * 1000,
-        length_sd=lambda wildcards: int(wildcards['length_kb']) * 500,
+        accuracy=lambda wildcards: float(wildcards["accuracy"]) / 100,
+        length_mean=lambda wildcards: int(wildcards["length_kb"]) * 1000,
+        length_sd=lambda wildcards: int(wildcards["length_kb"]) * 500,
         length_min=10_000,
-        depth=30,
-        seed=5023967
-    conda: "envs/pbsim.yaml"
+        depth=20,
+        seed=5023967,
+    conda:
+        "envs/pbsim.yaml"
     shell:
         """
         gunzip -c {input.reference} \
@@ -75,17 +87,17 @@ rule run_pbsim3:
         """
 
 
-
-
 rule get_perfect_read_info:
     input:
         fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
     output:
         tsv="data/regional_reads/{sample}/{region}/{platform}/read_info.tsv.gz",
     wildcard_constraints:
-        platform=r"perfect_.+"
-    conda: 'envs/default.yaml'
-    script: "scripts/get_perfect_read_info.smk.py"
+        platform=r"perfect_.+",
+    conda:
+        "envs/default.yaml"
+    script:
+        "scripts/get_perfect_read_info.smk.py"
 
 
 rule get_pbsim_metadata:
@@ -95,9 +107,11 @@ rule get_pbsim_metadata:
     output:
         tsv="data/regional_reads/{sample}/{region}/{platform}/read_info.tsv.gz",
     wildcard_constraints:
-        platform=r"pbsim_.+"
-    conda: 'envs/default.yaml'
-    script: "scripts/get_pbsim_read_info.smk.py"
+        platform=r"pbsim_.+",
+    conda:
+        "envs/default.yaml"
+    script:
+        "scripts/get_pbsim_read_info.smk.py"
 
 
 rule kmer_encoding:
@@ -109,35 +123,54 @@ rule kmer_encoding:
         json="data/feature_matrix/kmer/{sample}/{region}/{platform}/read_features.json.gz",
         tsv="data/feature_matrix/kmer/{sample}/{region}/{platform}/metadata.tsv.gz",
     params:
-        k = 10,
+        k=10,
         sample_fraction=0.05,
         seed=562104830,
-    conda: 'envs/default.yaml'
-    script: "scripts/kmer_encoding.smk.py"
+    conda:
+        "envs/default.yaml"
+    script:
+        "scripts/kmer_encoding.smk.py"
 
 
 rule run_minimap2_ava:
     input:
         fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
     output:
-        gaf="data/minimap2/{sample}/{region}/{platform}/alignment.gaf.gz",
+        paf="data/minimap2/{sample}/{region}/{platform}/alignment.paf.gz",
     params:
-        preset="ava-ont"
-    conda: "envs/minimap2.yaml"
+        preset="ava-ont",
+    conda:
+        "envs/minimap2.yaml"
     threads: 8
     shell:
         """
-        minimap2 -x {params.preset} -t {threads} {input.fasta} {input.fasta} | gzip -c > {output.gaf}
+        minimap2 -x {params.preset} -t {threads} {input.fasta} {input.fasta} | gzip -c > {output.paf}
         """
-    
 
+
+rule evaluate_configs:
+    input:
+        feature_matrix="data/feature_matrix/kmer/{sample}/{region}/{platform}/feature_matrix.npz",
+        read_features="data/feature_matrix/kmer/{sample}/{region}/{platform}/read_features.json.gz",
+        metadata="data/feature_matrix/kmer/{sample}/{region}/{platform}/metadata.tsv.gz",
+        paf="data/minimap2/{sample}/{region}/{platform}/alignment.paf.gz",
+    output:
+        folder=directory("data/evaluation/{sample}/{region}/{platform}/"),
+    log:
+        notebook="data/evaluation/{sample}/{region}/{platform}/evaluate_configs.py.ipynb",
+    threads: 16
+    conda:
+        "envs/evaluate.yaml"
+    notebook:
+        "notebooks/evaluate_configs.smk.py.ipynb"
 
 
 # ----------------------------------------------------------------------------------------------------
 
+
 rule test1:
     input:
-        "data/regional_reads/CHM13/TRA/perfect_10k/reads.fasta.gz"
+        "data/regional_reads/CHM13/TRA/perfect_10k/reads.fasta.gz",
 
 
 rule test2:
@@ -164,3 +197,6 @@ rule test5:
         "data/feature_matrix/kmer/CHM13/HLA/pbsim_ONT_93_30k/read_features.json.gz",
 
 
+rule test6:
+    input:
+        expand("data/evaluation/CHM13/{region}/pbsim_ONT_93_30k/", region=("HLA", "TRA", "IGK", "IGH")),

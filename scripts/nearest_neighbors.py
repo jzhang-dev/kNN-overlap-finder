@@ -116,7 +116,7 @@ class LowHash(_NearestNeighbors):
     @staticmethod
     def _get_lowhash_count(
         hash_count: int,
-        lowhash_fraction: float | None,
+        lowhash_fraction: float | None = None,
         lowhash_count: int | None = None,
     ) -> int:
         if lowhash_fraction is None and lowhash_count is None:
@@ -125,7 +125,7 @@ class LowHash(_NearestNeighbors):
             )
         if lowhash_fraction is not None and lowhash_count is not None:
             raise TypeError(
-                "`lowhash_fraction` and `lowhash_count` cannot be specified at the same time."
+                f"`lowhash_fraction` and `lowhash_count` cannot be specified at the same time. {lowhash_fraction=} {lowhash_count=}"
             )
 
         if lowhash_fraction is not None:
@@ -159,7 +159,7 @@ class LowHash(_NearestNeighbors):
         for j in range(sample_count):
             feature_indices = sparse.find(data[j, :] > 0)[1]
             hash_count = feature_indices.shape[0]
-            lowhash_count = self._get_lowhash_count(
+            sample_lowhash_count = self._get_lowhash_count(
                 hash_count=hash_count,
                 lowhash_fraction=lowhash_fraction,
                 lowhash_count=lowhash_count,
@@ -168,7 +168,7 @@ class LowHash(_NearestNeighbors):
                 bucket_indices = feature_indices + (k * feature_count)
                 sample_hash_values = hash_values[bucket_indices]
                 low_hash_buckets = bucket_indices[
-                    np.argsort(sample_hash_values)[:lowhash_count]
+                    np.argsort(sample_hash_values)[:sample_lowhash_count]
                 ]
                 buckets[low_hash_buckets, j] = 1
             if verbose and j % 1000 == 0:
@@ -222,8 +222,9 @@ class LowHash(_NearestNeighbors):
 
     def get_neighbors(
         self,
-        n_neighbors: int = 20,
-        lowhash_fraction: float = 0.01,
+        n_neighbors: int,
+        lowhash_fraction: float | None = None,
+        lowhash_count: int | None = None,
         repeats=100,
         min_bucket_size=2,
         max_bucket_size=float("inf"),
@@ -253,7 +254,7 @@ class WeightedLowHash(LowHash):
 
     def _pcws_low_hash(
         self,
-        lowhash_fraction: float | None,
+        lowhash_fraction: float | None = None,
         lowhash_count: int | None = None,
         repeats=1,
         *,
@@ -296,12 +297,12 @@ class WeightedLowHash(LowHash):
             )
 
             hash_count = feature_indices.shape[0]
-            lowhash_count = self._get_lowhash_count(
+            sample_lowhash_count = self._get_lowhash_count(
                 hash_count=hash_count,
                 lowhash_fraction=lowhash_fraction,
                 lowhash_count=lowhash_count,
             )
-            lowhash_positions = np.argsort(a_matrix, axis=0)[:lowhash_count]
+            lowhash_positions = np.argsort(a_matrix, axis=0)[:sample_lowhash_count]
             lowhash_features = feature_indices[lowhash_positions]
 
             bucket_indices = []
@@ -320,8 +321,8 @@ class WeightedLowHash(LowHash):
 
     def get_neighbors(
         self,
-        n_neighbors: int = 20,
-        lowhash_fraction: float | None = 0.01,
+        n_neighbors: int,
+        lowhash_fraction: float | None = None,
         lowhash_count: int | None = None,
         repeats=100,
         min_bucket_size=2,

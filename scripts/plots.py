@@ -138,6 +138,7 @@ def plot_read_graph(
 
 
 def mp_plot_read_graphs(
+    axes,
     query_graphs: Sequence[ReadGraph],
     reference_graph: ReadGraph,
     metadata: pd.DataFrame,
@@ -148,14 +149,6 @@ def mp_plot_read_graphs(
     processes: int = 8,
     verbose=True,
 ):
-    # Create figures 
-    # In JupyterLab, figures will be displayed in the same order.
-    figures = []
-    axes = []
-    for _ in query_graphs:
-        fig, ax = plt.subplots(figsize=figsize)
-        figures.append(fig)
-        axes.append(ax)
     with sharedmem.MapReduce(np=processes) as pool:
         def work(i):
             if layout_method == "umap":
@@ -181,5 +174,3 @@ def mp_plot_read_graphs(
         pool.map(work, range(len(query_graphs)), reduce=reduce)
         if verbose:
             print("")
-
-    return figures, axes

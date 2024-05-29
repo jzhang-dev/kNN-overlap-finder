@@ -2,7 +2,10 @@ latency-wait: 60
 keep-going: True
 keep-incomplete: True
 rerun-incomplete: True
-rerun-triggers: mtime
+rerun-triggers: 
+  - mtime
+  - params
+  - input
 printshellcmds: True
 use-conda: True
 use-envmodules: True

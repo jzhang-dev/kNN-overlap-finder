@@ -1,15 +1,18 @@
 channels:
-  - defaults
-  - bioconda
   - conda-forge
+  - bioconda
+  - defaults
 dependencies:
   - biopython 
   - matplotlib 
+  - nbconvert
+  - notebook
   - numpy 
   - pandas 
-  - pysam
   - python >= 3.9
   - python-intervaltree
   - requests
-  - scipy
+  - scanpy
+  - scikit-learn 
+
 
