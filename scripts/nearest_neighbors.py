@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 import mmh3
 from functools import lru_cache
 import collections
-from typing import Sequence, Type, Mapping, Iterable
+from typing import Sequence, Type, Mapping, Iterable, Literal
 from warnings import warn
 from math import ceil
 from scipy import sparse
@@ -11,7 +11,7 @@ import numpy as np
 from numpy import matlib
 import sklearn.neighbors
 import pynndescent
-from sklearn.feature_extraction.text import TfidfTransformer
+import hnswlib
 
 
 from data_io import parse_paf_file, get_sibling_id
@@ -80,7 +80,8 @@ class NNDescent(_NearestNeighbors):
         *,
         n_trees: int = 100,
         low_memory: bool = False,
-        verbose: bool = True,
+        n_jobs: int | None = None, 
+        verbose: bool = False,
     ):
         index = pynndescent.NNDescent(
             self.data,
@@ -88,9 +89,38 @@ class NNDescent(_NearestNeighbors):
             n_neighbors=n_neighbors,
             n_trees=n_trees,
             low_memory=low_memory,
+            n_jobs=n_jobs,
             verbose=verbose,
         )
         nbr_indices, _ = index.neighbor_graph  # type: ignore
+        return nbr_indices
+
+
+class HNSW(_NearestNeighbors):
+    def get_neighbors(
+        self,
+        n_neighbors: int,
+        metric: Literal["euclidean", "cosine"] = "euclidean",
+        *,
+        ef_construction=200,
+        M=16,
+        ef=50,
+    ) -> np.ndarray:
+        data = self.data
+        if sparse.issparse(data):
+            raise TypeError("HNSW cannot be used on sparse arrays.")
+        if metric == "euclidean":
+            space = "l2"
+        else:
+            space = metric
+
+        # Initialize the HNSW index
+        p = hnswlib.Index(space=space, dim=data.shape[1])
+        p.init_index(max_elements=data.shape[0], ef_construction=ef_construction, M=M)
+        ids = np.arange(data.shape[0])
+        p.add_items(data, ids)
+        p.set_ef(ef)
+        nbr_indices, _ = p.knn_query(data, k=n_neighbors)
         return nbr_indices
 
 
@@ -285,7 +315,9 @@ class WeightedLowHash(LowHash):
             t_matrix = np.floor(
                 np.divide(
                     matlib.repmat(
-                        np.log(data[feature_indices, j_sample].todense()), 1, dimension_num
+                        np.log(data[feature_indices, j_sample].todense()),
+                        1,
+                        dimension_num,
                     ),
                     gamma,
                 )
@@ -293,7 +325,8 @@ class WeightedLowHash(LowHash):
             )
             y_matrix = np.exp(np.multiply(gamma, t_matrix - beta[feature_indices, :]))
             a_matrix = np.divide(
-                -np.log(x[feature_indices, :]), np.divide(y_matrix, u1[feature_indices, :])
+                -np.log(x[feature_indices, :]),
+                np.divide(y_matrix, u1[feature_indices, :]),
             )
 
             hash_count = feature_indices.shape[0]

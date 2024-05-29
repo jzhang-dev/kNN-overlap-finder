@@ -4,11 +4,13 @@ channels:
   - defaults
 dependencies:
   - biopython 
+  - hnswlib
   - matplotlib 
   - nbconvert
   - notebook
   - numpy 
   - pandas 
+  - pynndescent
   - python >= 3.9
   - python-intervaltree
   - requests

@@ -7,6 +7,8 @@ REGIONS = dict(
     HLA=("chr6", 28476949, 34231258),
     IGK=("chr2", 87866370, 91790947),
     IGH=("chr14", 98839469, 101161492),
+    chr6_50M=("chr6", 0, 50_000_000),
+    chr1_248M=("chr1", 0, 1_000_000_000)
 )
 
 
@@ -199,4 +201,5 @@ rule test5:
 
 rule test6:
     input:
-        expand("data/evaluation/CHM13/{region}/pbsim_ONT_93_30k/", region=("HLA", "TRA", "IGK", "IGH")),
+        expand("data/evaluation/CHM13/{region}/pbsim_ONT_93_30k/", 
+        region=("HLA", "TRA", "IGK", "IGH", "chr6_50M", "chr1_248M")),
