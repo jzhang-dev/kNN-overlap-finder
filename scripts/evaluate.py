@@ -9,96 +9,66 @@ import sharedmem
 
 from nearest_neighbors import _NearestNeighbors
 from dim_reduction import SpectralMatrixFree
-from graph import ReadGraph, get_read_graph_statistics
+from graph import OverlapGraph, get_overlap_statistics
 from align import cWeightedSemiglobalAligner, run_multiprocess_alignment
 
 
 @dataclass
 class NearestNeighborsConfig:
+    data: csr_matrix = field(repr=False)
     method: Type[_NearestNeighbors]
     use_tfidf: bool = False
     dim_reduction: int | None = None
-    n_neighbors: int = 20
-    nearest_neighbor_kw: dict = field(default_factory=dict, repr=False)
-    elapsed_time: float | None = None
-    require_mutual_neighbors: bool = False
-    pre_align_graph: ReadGraph | None = field(default=None, repr=False)
-    pre_align_stats: dict | None = None
-    post_align_intersect: bool = False
-    post_align_graph: ReadGraph | None = field(default=None, repr=False)
-    post_align_stats: dict | None = None
+    nearest_neighbor_kw: dict = field(default_factory=dict, repr=True)
+    _neighbor_indices: np.ndarray | None = field(default=None, repr=False)
+    _elapsed_time: float | None = None
 
-    def _get_overlap_candidates(self, data, read_ids):
+    def compute_nearest_neighbors(self, n_neighbors: int, *, verbose=True):
+        data = self.data
         start_time = time.time()
         if self.use_tfidf:
+            if verbose:
+                print("TF-IDF transform.")
             data = TfidfTransformer(use_idf=True, smooth_idf=True).fit_transform(data)
         if self.dim_reduction is not None:
+            if verbose:
+                print("Dimension reduction.")
             reducer = SpectralMatrixFree(self.dim_reduction)
             reducer.fit(data)
             _, data = reducer.transform()
-        neighbor_indices = self.method(data).get_neighbors(
-            n_neighbors=self.n_neighbors, **self.nearest_neighbor_kw
+        self._neighbor_indices = self.method(data).get_neighbors(
+            n_neighbors=n_neighbors, **self.nearest_neighbor_kw
         )
         elapsed_time = time.time() - start_time
+        self._elapsed_time = elapsed_time
+        if verbose:
+            print(f"Elapsed time: {elapsed_time:.2f} s")
 
+    def _get_overlap_candidates(self, n_neighbors: int, read_ids, *, verbose=True):
+        neighbor_indices = self._neighbor_indices
+        if neighbor_indices is None:
+            raise TypeError()
+        if neighbor_indices.shape[1] < n_neighbors:
+            raise ValueError("Not enough neighbors computed.")
         overlap_candidates = []
+
         for i1, row in enumerate(neighbor_indices):
             k1 = read_ids[i1]
             row = [i2 for i2 in row if i2 != i1 and i2 >= 0]
-            overlap_candidates += [(k1, read_ids[i2]) for i2 in row[: self.n_neighbors]]
+            overlap_candidates += [(k1, read_ids[i2]) for i2 in row[:n_neighbors]]
 
-        return overlap_candidates, elapsed_time
+        return overlap_candidates
 
-    def compute_pre_alignment_graph(
-        self, data, read_ids, reference_graph: ReadGraph, *, intersect: bool = False
+    def get_overlap_graph(
+        self, n_neighbors: int, read_ids, *, require_mutual_neighbors: bool = False, verbose=True
     ):
-        overlap_candidates, elapsed_time = self._get_overlap_candidates(data, read_ids)
-        self.elapsed_time = elapsed_time
-        graph = ReadGraph.from_overlap_candidates(
-            overlap_candidates, require_mutual_neighbors=intersect
+        overlap_candidates = self._get_overlap_candidates(
+            n_neighbors=n_neighbors, read_ids=read_ids, verbose=verbose
         )
-        self.pre_align_graph = graph
-        result = get_read_graph_statistics(graph, reference_graph=reference_graph)
-        self.pre_align_stats = result
-
-    def compute_post_alignment_graph(
-        self,
-        read_features,
-        feature_weights,
-        reference_graph: ReadGraph,
-        *,
-        n_neighbors=6,
-        min_alignment_score=0,
-        processes=8,
-        batch_size=200,
-        _cache: dict = {},
-        **kw,
-    ):
-        if self.pre_align_graph is None:
-            raise TypeError()
-
-        alignment_dict = self.pre_align_graph.align_edges(
-            read_features=read_features,
-            feature_weights=feature_weights,
-            aligner=cWeightedSemiglobalAligner,
-            align_kw=dict(max_cells=int(1e10)),
-            traceback=False,
-            processes=processes,
-            batch_size=batch_size,
-            min_free_memory_gb=48,
-            max_total_wait_seconds=600,
-            _cache=_cache,
-            **kw,
+        graph = OverlapGraph.from_overlap_candidates(
+            overlap_candidates, require_mutual_neighbors=require_mutual_neighbors
         )
-
-        graph = ReadGraph.from_pairwise_alignment(
-            alignment_dict,
-            n_neighbors=n_neighbors,
-            min_alignment_score=min_alignment_score,
-        )
-        self.post_align_graph = graph
-        result = get_read_graph_statistics(graph, reference_graph=reference_graph)
-        self.post_align_stats = result
+        return graph
 
 
 def mp_evaluate_configs(
@@ -106,17 +76,15 @@ def mp_evaluate_configs(
     feature_matrix: csr_matrix,
     read_features: Mapping[int, Sequence[int]],
     feature_weights: Mapping[int, int],
-    reference_graph: ReadGraph,
+    reference_graph: OverlapGraph,
     *,
-    pairwise_alignment=True,
-    post_align_n_neighbors=6,
     processes=8,
-    batch_size=200,
-    alignment_pickle_path=None,
+    verbose=True,
 ):
     data = feature_matrix
-    pickle_file = alignment_pickle_path
     configs = list(configs)
+    if verbose:
+        print(f"Evaluating {len(configs)} configs using {processes} processes.")
 
     def print_stats(stats):
         if stats is None:
@@ -147,11 +115,10 @@ def mp_evaluate_configs(
 
         pool.map(work, range(len(configs)), reduce=reduce)
 
-
     # Pairwise alignment
     if not pairwise_alignment:
         return configs
-    
+
     if pickle_file is not None and os.path.isfile(pickle_file):
         with gzip.open(pickle_file, "rb") as f:
             alignment_dict = pickle.load(f)  # type:ignore

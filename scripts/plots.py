@@ -1,4 +1,5 @@
 from typing import Sequence, Mapping
+import os
 import networkx as nx
 from data_io import is_fwd_id, get_fwd_id
 
@@ -8,7 +9,7 @@ import scanpy as sc
 import matplotlib.pyplot as plt
 import anndata as ad
 
-from graph import ReadGraph
+from graph import OverlapGraph
 
 
 def get_graphviz_layout(graph, method="neato", figsize=(8, 6), seed=43, **kw):
@@ -62,9 +63,9 @@ def get_umap_layout(graph, *, min_distance=1, random_state=0, verbose=False):
 
 def plot_read_graph(
     ax,
-    query_graph: ReadGraph | None = None,
+    query_graph: OverlapGraph | None = None,
     metadata: pd.DataFrame | None = None,
-    reference_graph: ReadGraph | None = None,
+    reference_graph: OverlapGraph | None = None,
     *,
     layout_method="sfdp",
     pos=None,
@@ -139,37 +140,51 @@ def plot_read_graph(
 
 def mp_plot_read_graphs(
     axes,
-    query_graphs: Sequence[ReadGraph],
-    reference_graph: ReadGraph,
+    query_graphs: Sequence[OverlapGraph],
+    reference_graph: OverlapGraph,
     metadata: pd.DataFrame,
     *,
     layout_method="neato",
     figsize=(8, 6),
     node_size=3,
+    seed: int = 4829,
     processes: int = 8,
+    output_dir: str | None = None,
     verbose=True,
 ):
+    def plot(i, pos):
+        plot_read_graph(
+            ax=axes[i],
+            query_graph=query_graphs[i],
+            reference_graph=reference_graph,
+            metadata=metadata,
+            pos=pos,
+            node_size=node_size,
+        )
+
     with sharedmem.MapReduce(np=processes) as pool:
+
         def work(i):
             if layout_method == "umap":
                 pos = get_umap_layout(graph=query_graphs[i])
             else:
                 pos = get_graphviz_layout(
-                    graph=query_graphs[i], figsize=figsize, seed=43, method=layout_method
+                    graph=query_graphs[i],
+                    figsize=figsize,
+                    seed=seed,
+                    method=layout_method,
                 )
+            if output_dir is not None:
+                os.makedirs(output_dir, exist_ok=True)
+                output_path = os.path.join(output_dir, f"{i}.png")
+                plot(i, pos)
+                axes[i].figure.savefig(output_path)
             return i, pos
 
         def reduce(i, pos):
             if verbose:
                 print(i, end=" ")
-            plot_read_graph(
-                ax=axes[i],
-                query_graph=query_graphs[i],
-                reference_graph=reference_graph,
-                metadata=metadata,
-                pos=pos,
-                node_size=node_size,
-            )
+            plot(i, pos)
 
         pool.map(work, range(len(query_graphs)), reduce=reduce)
         if verbose:

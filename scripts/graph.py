@@ -31,7 +31,7 @@ def get_interval_trees(
     return tree_dict
 
 
-class ReadGraph(nx.Graph):
+class OverlapGraph(nx.Graph):
 
     @classmethod
     def from_overlap_candidates(
@@ -170,7 +170,7 @@ class ReadGraph(nx.Graph):
         return alignment_dict
 
 
-def get_read_graph_statistics(query_graph: ReadGraph, reference_graph: ReadGraph):
+def get_overlap_statistics(query_graph: OverlapGraph, reference_graph: OverlapGraph):
     reference_edges = set(
         tuple(sorted((node_1, node_2))) for node_1, node_2 in reference_graph.edges
     )

@@ -202,4 +202,5 @@ rule test5:
 rule test6:
     input:
         expand("data/evaluation/CHM13/{region}/pbsim_ONT_93_30k/", 
-        region=("HLA", "TRA", "IGK", "IGH", "chr6_50M", "chr1_248M")),
+        region=("HLA", "TRA", "IGK", "IGH", "chr6_50M")),
+ 

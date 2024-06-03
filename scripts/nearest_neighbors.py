@@ -79,9 +79,10 @@ class NNDescent(_NearestNeighbors):
         n_neighbors: int = 20,
         *,
         n_trees: int = 100,
-        low_memory: bool = False,
+        low_memory: bool = True,
         n_jobs: int | None = None, 
-        verbose: bool = False,
+        seed: int | None = 683985,
+        verbose: bool = True,
     ):
         index = pynndescent.NNDescent(
             self.data,
@@ -90,6 +91,7 @@ class NNDescent(_NearestNeighbors):
             n_trees=n_trees,
             low_memory=low_memory,
             n_jobs=n_jobs,
+            random_state=seed,
             verbose=verbose,
         )
         nbr_indices, _ = index.neighbor_graph  # type: ignore
@@ -102,10 +104,17 @@ class HNSW(_NearestNeighbors):
         n_neighbors: int,
         metric: Literal["euclidean", "cosine"] = "euclidean",
         *,
-        ef_construction=200,
-        M=16,
-        ef=50,
+        threads: int | None = None,
+        M:int=16,
+        ef_construction:int=200, 
+        ef_search: int=50,
     ) -> np.ndarray:
+        """
+        See https://www.pinecone.io/learn/series/faiss/vector-indexes/
+        M — the number of nearest neighbors that each vertex will connect to.
+        efSearch — how many entry points will be explored between layers during the search.
+        efConstruction — how many entry points will be explored when building the index.
+        """
         data = self.data
         if sparse.issparse(data):
             raise TypeError("HNSW cannot be used on sparse arrays.")
@@ -116,10 +125,12 @@ class HNSW(_NearestNeighbors):
 
         # Initialize the HNSW index
         p = hnswlib.Index(space=space, dim=data.shape[1])
+        if threads is not None:
+            p.set_num_threads(threads)
         p.init_index(max_elements=data.shape[0], ef_construction=ef_construction, M=M)
         ids = np.arange(data.shape[0])
         p.add_items(data, ids)
-        p.set_ef(ef)
+        p.set_ef(ef_search)
         nbr_indices, _ = p.knn_query(data, k=n_neighbors)
         return nbr_indices
 
@@ -401,8 +412,6 @@ class PAFNearestNeighbors(_NearestNeighbors):
             i2 = read_indices.get(record.target_name)
             if i1 is None or i2 is None:
                 # Assume query or target is excluded
-                continue
-            if i1 == i2:
                 continue
             if record.strand == "-":
                 i1 = get_sibling_id(i1)
