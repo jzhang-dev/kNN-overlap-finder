@@ -17,16 +17,22 @@ from align import cWeightedSemiglobalAligner, run_multiprocess_alignment
 class NearestNeighborsConfig:
     data: csr_matrix = field(repr=False)
     method: Type[_NearestNeighbors]
-    use_tfidf: bool = False
+    description: str = ""
+    binarize: bool = False
+    tfidf: bool = False
     dim_reduction: int | None = None
-    nearest_neighbor_kw: dict = field(default_factory=dict, repr=True)
+    nearest_neighbor_kw: dict = field(default_factory=dict, repr=False)
     _neighbor_indices: np.ndarray | None = field(default=None, repr=False)
     _elapsed_time: float | None = None
 
     def compute_nearest_neighbors(self, n_neighbors: int, *, verbose=True):
-        data = self.data
+        data = self.data.copy()
         start_time = time.time()
-        if self.use_tfidf:
+        if self.binarize:
+            if verbose:
+                print("Binarization.")
+            data[data > 0] = 1
+        if self.tfidf:
             if verbose:
                 print("TF-IDF transform.")
             data = TfidfTransformer(use_idf=True, smooth_idf=True).fit_transform(data)

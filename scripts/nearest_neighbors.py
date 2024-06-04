@@ -12,6 +12,7 @@ from numpy import matlib
 import sklearn.neighbors
 import pynndescent
 import hnswlib
+import faiss
 
 
 from data_io import parse_paf_file, get_sibling_id
@@ -80,7 +81,7 @@ class NNDescent(_NearestNeighbors):
         *,
         n_trees: int = 100,
         low_memory: bool = True,
-        n_jobs: int | None = None, 
+        n_jobs: int | None = None,
         seed: int | None = 683985,
         verbose: bool = True,
     ):
@@ -105,9 +106,9 @@ class HNSW(_NearestNeighbors):
         metric: Literal["euclidean", "cosine"] = "euclidean",
         *,
         threads: int | None = None,
-        M:int=16,
-        ef_construction:int=200, 
-        ef_search: int=50,
+        M: int = 16,
+        ef_construction: int = 200,
+        ef_search: int = 50,
     ) -> np.ndarray:
         """
         See https://www.pinecone.io/learn/series/faiss/vector-indexes/
@@ -258,7 +259,9 @@ class LowHash(_NearestNeighbors):
             neighbors = list(
                 sorted(row_nbr_dict, key=lambda x: row_nbr_dict[x], reverse=True)
             )[:n_neighbors]
-            nbr_matrix[i, : len(neighbors)] = neighbors
+            nbr_matrix[i, : len(neighbors)] = (
+                neighbors  # len(neighbors) could be smaller than n_neighbors
+            )
         return nbr_matrix
 
     def get_neighbors(
@@ -278,6 +281,7 @@ class LowHash(_NearestNeighbors):
         buckets = self._lowhash(
             repeats=repeats,
             lowhash_fraction=lowhash_fraction,
+            lowhash_count=lowhash_count,
             seed=seed,
             verbose=verbose,
         )
@@ -439,3 +443,30 @@ class PAFNearestNeighbors(_NearestNeighbors):
             )[:n_neighbors]
             nbr_matrix[i, : len(neighbors)] = neighbors
         return nbr_matrix
+
+
+class ProductQuantization(_NearestNeighbors):
+    def get_neighbors(
+        self, n_neighbors: int, metric: Literal["euclidean"] = "euclidean", *, m=8, nbits=8, seed=455390
+    ) -> np.ndarray:
+        if metric == "euclidean":
+            faiss_metric = faiss.METRIC_L2
+        else:
+            raise ValueError()
+        
+        data = self.data
+        feature_count = data.shape[1]
+        if feature_count % m != 0:
+            new_feature_count = feature_count // m * m
+            feature_indices = np.random.default_rng(seed).choice(feature_count, new_feature_count, replace=False, shuffle=False)
+            data = data[:, feature_indices]
+        else:
+            new_feature_count = feature_count
+        assert data.shape[1] 
+
+        index_pq = faiss.IndexPQ(new_feature_count, m, nbits, faiss_metric)
+        index_pq.train(data)
+        index_pq.add(data)
+        _, nbr_indices = index_pq.search(data, n_neighbors)
+        return nbr_indices
+
