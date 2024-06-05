@@ -4,7 +4,7 @@ if TYPE_CHECKING:
     from snakemake_stub import *
 
 
-import gzip, json
+import gzip, json, collections
 from Bio import SeqIO
 import scipy.sparse as sp
 from collections import Counter
@@ -37,6 +37,7 @@ def encode_reads(
     k,
     *,
     sample_fraction: float,
+    min_multiplicity: int,
     seed: int,
     include_reverse_complement=True,
 ):
@@ -71,11 +72,19 @@ def encode_reads(
                 read_orientations.append("-")
 
     # Build vocabulary
-    vocab = set()
+    kmer_counter = collections.Counter()
     for seq in read_sequences:
-        vocab |= set(seq[p : p + k] for p in range(len(seq) - k + 1))
+        for p in range(len(seq) - k + 1):
+            kmer = seq[p : p + k]
+            canonical_kmer = min(kmer, reverse_complement(kmer))
+            kmer_counter[canonical_kmer] += 1
+
     rng = np.random.default_rng(seed=seed)
-    vocab = set(x for x in vocab if rng.random() <= sample_fraction)
+    vocab = set(
+        x
+        for x, count in kmer_counter.items()
+        if count >= min_multiplicity and rng.random() <= sample_fraction
+    )
     vocab |= set(reverse_complement(x) for x in vocab)
     kmer_indices = {kmer: i for i, kmer in enumerate(vocab)}
 
@@ -136,8 +145,9 @@ def main(snakemake: "SnakemakeContext"):
     output_npz_file = snakemake.output["npz"]
     output_json_file = snakemake.output["json"]
     output_tsv_file = snakemake.output["tsv"]
-    k = snakemake.params["k"]
+    k = int(snakemake.wildcards["k"])
     sample_fraction = snakemake.params["sample_fraction"]
+    min_multiplicity = snakemake.params["min_multiplicity"]
     seed = snakemake.params["seed"]
 
     feature_matrix, read_features, metadata = encode_reads(
@@ -145,6 +155,7 @@ def main(snakemake: "SnakemakeContext"):
         info_path=input_tsv_file,
         k=k,
         sample_fraction=sample_fraction,
+        min_multiplicity=min_multiplicity,
         seed=seed,
     )
     sp.save_npz(output_npz_file, feature_matrix)

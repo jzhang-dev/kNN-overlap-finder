@@ -14,6 +14,10 @@ REGIONS = dict(
 
 wildcard_constraints:
     length_kb=r"\d+",
+    sample=r"\w+",
+    region=r"\w+",
+    platform=r"\w+",
+    encoding=r"\w+",
 
 
 rule extract_regional_reference:
@@ -121,13 +125,15 @@ rule kmer_encoding:
         fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
         tsv="data/regional_reads/{sample}/{region}/{platform}/read_info.tsv.gz",
     output:
-        npz="data/feature_matrix/kmer/{sample}/{region}/{platform}/feature_matrix.npz",
-        json="data/feature_matrix/kmer/{sample}/{region}/{platform}/read_features.json.gz",
-        tsv="data/feature_matrix/kmer/{sample}/{region}/{platform}/metadata.tsv.gz",
+        npz="data/feature_matrix/{sample}/{region}/{platform}/kmer_k{k}/feature_matrix.npz",
+        json="data/feature_matrix/{sample}/{region}/{platform}/kmer_k{k}/read_features.json.gz",
+        tsv="data/feature_matrix/{sample}/{region}/{platform}/kmer_k{k}/metadata.tsv.gz",
     params:
-        k=10,
         sample_fraction=0.05,
+        min_multiplicity=2,
         seed=562104830,
+    wildcard_constraints:
+        k=r"\d+",
     conda:
         "envs/default.yaml"
     script:
@@ -152,14 +158,14 @@ rule run_minimap2_ava:
 
 rule evaluate_configs:
     input:
-        feature_matrix="data/feature_matrix/kmer/{sample}/{region}/{platform}/feature_matrix.npz",
-        read_features="data/feature_matrix/kmer/{sample}/{region}/{platform}/read_features.json.gz",
-        metadata="data/feature_matrix/kmer/{sample}/{region}/{platform}/metadata.tsv.gz",
+        feature_matrix="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/feature_matrix.npz",
+        read_features="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/read_features.json.gz",
+        metadata="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/metadata.tsv.gz",
         paf="data/minimap2/{sample}/{region}/{platform}/alignment.paf.gz",
     output:
-        folder=directory("data/evaluation/{sample}/{region}/{platform}/"),
+        folder=directory("data/evaluation/{sample}/{region}/{platform}/{encoding}/"),
     log:
-        notebook="data/evaluation/{sample}/{region}/{platform}/evaluate_configs.py.ipynb",
+        notebook="data/evaluation/{sample}/{region}/{platform}/{encoding}/evaluate_configs.py.ipynb",
     threads: 16
     conda:
         "envs/evaluate.yaml"
@@ -201,6 +207,6 @@ rule test5:
 
 rule test6:
     input:
-        expand("data/evaluation/CHM13/{region}/pbsim_ONT_93_30k/", 
-        region=("HLA", "TRA", "IGK", "IGH", "chr6_50M")),
+        expand("data/evaluation/CHM13/{region}/pbsim_ONT_93_30k/kmer_k{k}/", 
+        region=("HLA", "TRA", "IGK", "IGH"), k=[16])
  

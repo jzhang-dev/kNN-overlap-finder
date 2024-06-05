@@ -4,7 +4,10 @@ import numpy as np
 # TODO: weighted_by_sd
 
 class SpectralMatrixFree:
-    """Matrix-free spectral embedding without computing the similarity matrix explicitly.
+    """
+    Perform dimension reduction using Laplacian Eigenmaps.
+    
+    Matrix-free spectral embedding without computing the similarity matrix explicitly.
 
     Only cosine similarity is supported.
 

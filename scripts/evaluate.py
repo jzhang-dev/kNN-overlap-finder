@@ -42,8 +42,8 @@ class NearestNeighborsConfig:
             reducer = SpectralMatrixFree(self.dim_reduction)
             reducer.fit(data)
             _, data = reducer.transform()
-        self._neighbor_indices = self.method(data).get_neighbors(
-            n_neighbors=n_neighbors, **self.nearest_neighbor_kw
+        self._neighbor_indices = self.method().get_neighbors(
+            data, n_neighbors=n_neighbors, **self.nearest_neighbor_kw
         )
         elapsed_time = time.time() - start_time
         self._elapsed_time = elapsed_time
@@ -66,7 +66,12 @@ class NearestNeighborsConfig:
         return overlap_candidates
 
     def get_overlap_graph(
-        self, n_neighbors: int, read_ids, *, require_mutual_neighbors: bool = False, verbose=True
+        self,
+        n_neighbors: int,
+        read_ids,
+        *,
+        require_mutual_neighbors: bool = False,
+        verbose=True,
     ):
         overlap_candidates = self._get_overlap_candidates(
             n_neighbors=n_neighbors, read_ids=read_ids, verbose=verbose
@@ -75,6 +80,39 @@ class NearestNeighborsConfig:
             overlap_candidates, require_mutual_neighbors=require_mutual_neighbors
         )
         return graph
+
+
+def mp_compute_nearest_neighbors(
+    data: csr_matrix,
+    configs: Sequence[NearestNeighborsConfig],
+    n_neighbors: int,
+    *,
+    processes=4,
+    verbose=True,
+):
+
+    if verbose:
+        print(f"Evaluating {len(configs)} configs using {processes} processes.")
+
+    with sharedmem.MapReduce(np=processes) as pool:
+
+        def work(i):
+            if verbose:
+                print(i, end=" ")
+            config = configs[i]
+            config.compute_nearest_neighbors(
+                n_neighbors=n_neighbors, verbose=verbose
+            )
+            neighbor_indices = config._neighbor_indices
+            return i, neighbor_indices
+
+        def reduce(i, neighbor_indices):
+            configs[i]._neighbor_indices = neighbor_indices
+
+        pool.map(work, range(len(configs)), reduce=reduce)
+    
+    if verbose:
+        print("")
 
 
 def mp_evaluate_configs(
@@ -116,39 +154,8 @@ def mp_evaluate_configs(
         def reduce(i, config):
             configs[i] = config
             print(config)
-            print("Pre-alignment:")
             print_stats(config.pre_align_stats)
 
         pool.map(work, range(len(configs)), reduce=reduce)
-
-    # Pairwise alignment
-    if not pairwise_alignment:
-        return configs
-
-    if pickle_file is not None and os.path.isfile(pickle_file):
-        with gzip.open(pickle_file, "rb") as f:
-            alignment_dict = pickle.load(f)  # type:ignore
-    else:
-        alignment_dict = {}
-    initial_alignment_count = len(alignment_dict)
-
-    for config in configs:
-        config.compute_post_alignment_graph(
-            reference_graph=reference_graph,
-            _cache=alignment_dict,
-            feature_weights=feature_weights,
-            read_features=read_features,
-            n_neighbors=post_align_n_neighbors,
-            min_alignment_score=0,
-            processes=processes,
-            batch_size=batch_size,
-        )
-        print(config)
-        print("Post-alignment:")
-        print_stats(config.post_align_stats)
-
-    if pickle_file is not None and len(alignment_dict) > initial_alignment_count:
-        with gzip.open(pickle_file, "wb") as f:
-            pickle.dump(alignment_dict, f)  # type: ignore
 
     return configs

@@ -18,54 +18,55 @@ import faiss
 from data_io import parse_paf_file, get_sibling_id
 
 
-def get_marker_matrix(
-    read_markers, marker_weights, *, use_multiplicity=True, verbose=True
-) -> csr_matrix:
-    read_list = list(read_markers)
-    col_indices = {read: j for j, read in enumerate(read_list)}
-    marker_list = list(marker_weights)
-    row_indices = {marker: i for i, marker in enumerate(marker_list)}
+# def get_marker_matrix(
+#     read_markers, marker_weights, *, use_multiplicity=True, verbose=True
+# ) -> csr_matrix:
+#     read_list = list(read_markers)
+#     col_indices = {read: j for j, read in enumerate(read_list)}
+#     marker_list = list(marker_weights)
+#     row_indices = {marker: i for i, marker in enumerate(marker_list)}
 
-    values = []
-    rows = []
-    columns = []
-    for read, j in col_indices.items():
-        if use_multiplicity:
-            marker_multiplicity = collections.Counter(read_markers[read][0])
-        else:
-            marker_multiplicity = {x: 1 for x in read_markers[read][0]}
-        for marker, count in marker_multiplicity.items():
-            i = row_indices[marker]
-            values.append(marker_weights[marker] * count)
-            rows.append(i)
-        columns += [j] * len(marker_multiplicity)
-        if verbose and j % 10_000 == 0:
-            print(j, end=" ")
+#     values = []
+#     rows = []
+#     columns = []
+#     for read, j in col_indices.items():
+#         if use_multiplicity:
+#             marker_multiplicity = collections.Counter(read_markers[read][0])
+#         else:
+#             marker_multiplicity = {x: 1 for x in read_markers[read][0]}
+#         for marker, count in marker_multiplicity.items():
+#             i = row_indices[marker]
+#             values.append(marker_weights[marker] * count)
+#             rows.append(i)
+#         columns += [j] * len(marker_multiplicity)
+#         if verbose and j % 10_000 == 0:
+#             print(j, end=" ")
 
-    marker_matrix = sparse.coo_matrix(
-        (values, (rows, columns)),
-        shape=(len(row_indices), len(col_indices)),
-        dtype=np.uint16,
-    )
-    marker_matrix = marker_matrix.T
-    marker_matrix = csr_matrix(marker_matrix)
-    return marker_matrix
+#     marker_matrix = sparse.coo_matrix(
+#         (values, (rows, columns)),
+#         shape=(len(row_indices), len(col_indices)),
+#         dtype=np.uint16,
+#     )
+#     marker_matrix = marker_matrix.T
+#     marker_matrix = csr_matrix(marker_matrix)
+#     return marker_matrix
 
 
 @dataclass
 class _NearestNeighbors:
-    data: csr_matrix | np.ndarray
-
-    def get_neighbors(self, n_neighbors: int) -> np.ndarray:
+    def get_neighbors(
+        self, data: csr_matrix | np.ndarray, n_neighbors: int
+    ) -> np.ndarray:
         raise NotImplementedError()
 
 
 class ExactNearestNeighbors(_NearestNeighbors):
-    def get_neighbors(self, metric="cosine", n_neighbors: int = 20):
+    def get_neighbors(
+        self, data: csr_matrix | np.ndarray, metric="cosine", n_neighbors: int = 20
+    ):
         nbrs = sklearn.neighbors.NearestNeighbors(
             n_neighbors=n_neighbors, metric=metric
         )
-        data = self.data
         if metric == "jaccard" and isinstance(data, csr_matrix):
             data = data.toarray()
         nbrs.fit(data)
@@ -76,6 +77,7 @@ class ExactNearestNeighbors(_NearestNeighbors):
 class NNDescent(_NearestNeighbors):
     def get_neighbors(
         self,
+        data: csr_matrix | np.ndarray,
         metric="cosine",
         n_neighbors: int = 20,
         *,
@@ -86,7 +88,7 @@ class NNDescent(_NearestNeighbors):
         verbose: bool = True,
     ):
         index = pynndescent.NNDescent(
-            self.data,
+            data,
             metric=metric,
             n_neighbors=n_neighbors,
             n_trees=n_trees,
@@ -102,6 +104,7 @@ class NNDescent(_NearestNeighbors):
 class HNSW(_NearestNeighbors):
     def get_neighbors(
         self,
+        data: csr_matrix | np.ndarray,
         n_neighbors: int,
         metric: Literal["euclidean", "cosine"] = "euclidean",
         *,
@@ -116,7 +119,6 @@ class HNSW(_NearestNeighbors):
         efSearch — how many entry points will be explored between layers during the search.
         efConstruction — how many entry points will be explored when building the index.
         """
-        data = self.data
         if sparse.issparse(data):
             raise TypeError("HNSW cannot be used on sparse arrays.")
         if metric == "euclidean":
@@ -179,14 +181,13 @@ class LowHash(_NearestNeighbors):
 
     def _lowhash(
         self,
+        data: csr_matrix | np.ndarray,
         repeats: int,
         lowhash_fraction: float | None,
         lowhash_count: int | None = None,
         seed: int = 5731343,
         verbose=True,
     ) -> csr_matrix:
-
-        data = self.data
         sample_count, feature_count = data.shape
         buckets = sparse.dok_matrix(
             (feature_count * repeats, sample_count), dtype=np.bool_
@@ -222,6 +223,7 @@ class LowHash(_NearestNeighbors):
 
     def _get_adjacency_matrix(
         self,
+        data: csr_matrix | np.ndarray,
         buckets: csr_matrix,
         n_neighbors: int,
         min_bucket_size,
@@ -247,7 +249,7 @@ class LowHash(_NearestNeighbors):
             neighbor_dict[j][i] = count
 
         # Construct neighbor matrix
-        n_rows = self.data.shape[0]
+        n_rows = data.shape[0]
         nbr_matrix = np.empty((n_rows, n_neighbors), dtype=np.int64)
         nbr_matrix[:, :] = -1
         for i in range(n_rows):
@@ -266,6 +268,7 @@ class LowHash(_NearestNeighbors):
 
     def get_neighbors(
         self,
+        data: csr_matrix | np.ndarray,
         n_neighbors: int,
         lowhash_fraction: float | None = None,
         lowhash_count: int | None = None,
@@ -279,6 +282,7 @@ class LowHash(_NearestNeighbors):
     ) -> np.ndarray:
 
         buckets = self._lowhash(
+            data,
             repeats=repeats,
             lowhash_fraction=lowhash_fraction,
             lowhash_count=lowhash_count,
@@ -286,6 +290,7 @@ class LowHash(_NearestNeighbors):
             verbose=verbose,
         )
         nbr_matrix = self._get_adjacency_matrix(
+            data,
             buckets,
             n_neighbors=n_neighbors,
             min_bucket_size=min_bucket_size,
@@ -299,6 +304,7 @@ class WeightedLowHash(LowHash):
 
     def _pcws_low_hash(
         self,
+        data: csr_matrix | np.ndarray,
         lowhash_fraction: float | None = None,
         lowhash_count: int | None = None,
         repeats=1,
@@ -307,7 +313,7 @@ class WeightedLowHash(LowHash):
         use_weights=True,
         verbose=True,
     ) -> csr_matrix:
-        data = self.data.T.copy()  # rows for features; columns for instances
+        data = data.T.copy()  # rows for features; columns for instances
         if not use_weights:
             data[data > 0] = 1
         feature_count, sample_count = data.shape
@@ -369,6 +375,7 @@ class WeightedLowHash(LowHash):
 
     def get_neighbors(
         self,
+        data: csr_matrix | np.ndarray,
         n_neighbors: int,
         lowhash_fraction: float | None = None,
         lowhash_count: int | None = None,
@@ -383,6 +390,7 @@ class WeightedLowHash(LowHash):
     ) -> np.ndarray:
 
         buckets = self._pcws_low_hash(
+            data,
             repeats=repeats,
             lowhash_fraction=lowhash_fraction,
             lowhash_count=lowhash_count,
@@ -391,6 +399,7 @@ class WeightedLowHash(LowHash):
             verbose=verbose,
         )
         nbr_matrix = self._get_adjacency_matrix(
+            data,
             buckets,
             n_neighbors=n_neighbors,
             min_bucket_size=min_bucket_size,
@@ -403,6 +412,7 @@ class WeightedLowHash(LowHash):
 class PAFNearestNeighbors(_NearestNeighbors):
     def get_neighbors(
         self,
+        data: csr_matrix | np.ndarray,
         n_neighbors: int,
         paf_path: str,
         read_indices: Mapping[str, int],
@@ -429,7 +439,7 @@ class PAFNearestNeighbors(_NearestNeighbors):
             warn(f"No overlaps found from {paf_path}")
 
         # Construct neighbor matrix
-        n_rows = self.data.shape[0]
+        n_rows = data.shape[0]
         nbr_matrix = np.empty((n_rows, n_neighbors), dtype=np.int64)
         nbr_matrix[:, :] = -1
         for i in range(n_rows):
@@ -447,26 +457,35 @@ class PAFNearestNeighbors(_NearestNeighbors):
 
 class ProductQuantization(_NearestNeighbors):
     def get_neighbors(
-        self, n_neighbors: int, metric: Literal["euclidean"] = "euclidean", *, m=8, nbits=8, seed=455390
+        self,
+        data: csr_matrix | np.ndarray,
+        n_neighbors: int,
+        metric: Literal["euclidean"] = "euclidean",
+        *,
+        m=8,
+        nbits=8,
+        seed=455390,
     ) -> np.ndarray:
         if metric == "euclidean":
             faiss_metric = faiss.METRIC_L2
         else:
             raise ValueError()
-        
-        data = self.data
+
+        if sparse.issparse(data):
+            raise TypeError("ProductQuantization does not support sparse arrays.")
         feature_count = data.shape[1]
         if feature_count % m != 0:
             new_feature_count = feature_count // m * m
-            feature_indices = np.random.default_rng(seed).choice(feature_count, new_feature_count, replace=False, shuffle=False)
+            feature_indices = np.random.default_rng(seed).choice(
+                feature_count, new_feature_count, replace=False, shuffle=False
+            )
             data = data[:, feature_indices]
         else:
             new_feature_count = feature_count
-        assert data.shape[1] 
+        assert data.shape[1]
 
         index_pq = faiss.IndexPQ(new_feature_count, m, nbits, faiss_metric)
-        index_pq.train(data)
-        index_pq.add(data)
-        _, nbr_indices = index_pq.search(data, n_neighbors)
+        index_pq.train(data)  # type: ignore
+        index_pq.add(data)  # type: ignore
+        _, nbr_indices = index_pq.search(data, n_neighbors)  # type: ignore
         return nbr_indices
-
