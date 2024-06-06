@@ -156,6 +156,34 @@ rule run_minimap2_ava:
         """
 
 
+rule run_daligner:
+    input:
+        fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
+    output:
+        maf="data/daligner/{sample}/{region}/{platform}/alignment.maf.gz",
+    
+    params:
+        k = 16,
+        error_rate_tolerance=".1",
+        min_alignment_length=1000,
+        min_alignment_score=50,
+    threads: 8
+    conda:
+        "envs/daligner.yaml"
+    shell:
+        """
+        daligner \
+          -k{params.k} \
+          -e{params.error_rate_tolerance} \
+          -l{params.min_alignment_length} \
+          -s{params.min_alignment_score} \
+          -T{threads} \
+          {input.fasta} \
+        | gzip -c > {output.maf}
+        """
+    
+
+
 rule evaluate_configs:
     input:
         feature_matrix="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/feature_matrix.npz",
@@ -166,7 +194,7 @@ rule evaluate_configs:
         folder=directory("data/evaluation/{sample}/{region}/{platform}/{encoding}/"),
     log:
         notebook="data/evaluation/{sample}/{region}/{platform}/{encoding}/evaluate_configs.py.ipynb",
-    threads: 16
+    threads: 8
     conda:
         "envs/evaluate.yaml"
     notebook:
@@ -208,5 +236,9 @@ rule test5:
 rule test6:
     input:
         expand("data/evaluation/CHM13/{region}/pbsim_ONT_93_30k/kmer_k{k}/", 
-        region=("HLA", "TRA", "IGK", "IGH", 'chr6_50M'), k=[16])
+        region=("HLA", "TRA", "IGK", "IGH"), k=[16])
  
+rule test7:
+    input:
+        expand("data/evaluation/CHM13/{region}/pbsim_ONT_93_30k/kmer_k{k}/", 
+        region=["chr6_50M"], k=[16])

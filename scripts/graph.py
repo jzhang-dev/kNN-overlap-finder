@@ -87,9 +87,12 @@ class OverlapGraph(nx.Graph):
 
     @classmethod
     def from_intervals(cls, read_intervals: Mapping[int, Collection[GenomicInterval]]):
+        # Find all overlaps
         trees = get_interval_trees(read_intervals=read_intervals)
         graph = cls()
+        contained_reads = set()
         for read_0, intervals in read_intervals.items():
+            parent_reads = set()
             for intv in intervals:
                 tree = trees[intv.chromosome]
                 start_0 = intv.start
@@ -98,9 +101,11 @@ class OverlapGraph(nx.Graph):
                     read_1 = intv_1.data
                     if read_1 == read_0:
                         continue
+                    start_1, end_1 = intv_1.begin, intv_1.end
+                    if start_1 < start_0 and end_1 > end_0:
+                        parent_reads.add(read_1)
                     if graph.has_edge(read_0, read_1):
                         continue
-                    start_1, end_1 = intv_1.begin, intv_1.end
                     overlap_size = max(0, min(end_0, end_1) - max(start_0, start_1))
                     left_overhang_size = abs(start_0 - start_1)
                     left_overhang_node = read_0 if start_0 <= start_1 else read_1
@@ -116,6 +121,15 @@ class OverlapGraph(nx.Graph):
                         right_overhang_node=right_overhang_node,
                         redundant=True,
                     )
+            if len(parent_reads) == 1:
+                contained_reads.add(read_0)
+        
+        # Label contained reads
+        nx.set_node_attributes(graph, "contained", False)
+        for read in contained_reads:
+            graph.nodes[read]['contained'] = True
+        
+        # Identify non-redundant overlaps
         for node_0 in graph.nodes():
             nearest_left_node = None
             min_left_overhang = float("inf")
