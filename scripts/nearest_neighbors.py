@@ -60,15 +60,35 @@ class _NearestNeighbors:
         raise NotImplementedError()
 
 
+def generalized_jaccard_similarity(x: csr_matrix | np.ndarray, y: csr_matrix | np.ndarray) -> float:
+    if x.shape[0] != 1 or y.shape[0] != 1:
+        raise ValueError()
+    if x.shape[1] != y.shape[1]:
+        raise ValueError()
+    
+    s = sparse.vstack([x, y]) # TODO: dense
+    jaccard_similarity = s.min(axis=0).sum() / s.max(axis=0).sum()
+    return jaccard_similarity
+
+def generalized_jaccard_distance(x: csr_matrix | np.ndarray, y: csr_matrix | np.ndarray) -> float:
+    return 1 - generalized_jaccard_similarity(x, y)
+
 class ExactNearestNeighbors(_NearestNeighbors):
     def get_neighbors(
         self, data: csr_matrix | np.ndarray, metric="cosine", n_neighbors: int = 20
     ):
-        nbrs = sklearn.neighbors.NearestNeighbors(
-            n_neighbors=n_neighbors, metric=metric
-        )
+        
         if metric == "jaccard" and isinstance(data, csr_matrix):
             data = data.toarray()
+        if metric == 'generalized_jaccard':
+            _metric = generalized_jaccard_distance
+        else:
+            _metric = metric
+
+        nbrs = sklearn.neighbors.NearestNeighbors(
+            n_neighbors=n_neighbors, metric=_metric
+        )
+
         nbrs.fit(data)
         _, nbr_indices = nbrs.kneighbors(data)
         return nbr_indices
