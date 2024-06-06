@@ -5,9 +5,9 @@ if TYPE_CHECKING:
 
 
 import gzip, json, collections
+from typing import Sequence, Mapping, Collection
 from Bio import SeqIO
 import scipy.sparse as sp
-from collections import Counter
 import numpy as np
 import pandas as pd
 
@@ -31,30 +31,7 @@ def init_reverse_complement():
 reverse_complement = init_reverse_complement()
 
 
-def encode_reads(
-    fasta_path: str,
-    info_path: str,
-    k,
-    *,
-    sample_fraction: float,
-    min_multiplicity: int,
-    seed: int,
-    include_reverse_complement=True,
-):
-    """
-    Encodes sequencing reads from a gzipped FASTA file as a sparse matrix.
-
-    Args:
-        fasta_gz_file: The path to the gzipped FASTA file.
-        k: The length of k-mers to consider.
-
-    Returns:
-        A scipy.sparse CSR matrix representing the k-mer counts for each read.
-    """
-    # Load reads info
-    info_df = pd.read_table(info_path).set_index("read_name")
-
-    # Load reads
+def load_reads(fasta_path: str):
     read_sequences = []
     read_names = []
     read_orientations = []
@@ -66,29 +43,50 @@ def encode_reads(
             read_names.append(record.id)
             read_orientations.append("+")
 
-            if include_reverse_complement:
-                read_sequences.append(reverse_complement(seq))
-                read_names.append(record.id)
-                read_orientations.append("-")
+            # Include reverse complement
+            read_sequences.append(reverse_complement(seq))
+            read_names.append(record.id)
+            read_orientations.append("-")
 
-    # Build vocabulary
+    return read_names, read_orientations, read_sequences
+
+
+def build_kmer_index(
+    read_sequences: Sequence[str],
+    k: int,
+    *,
+    sample_fraction: float,
+    min_multiplicity: int,
+    seed: int,
+    processes: int,
+) -> Mapping[str, int]:
     kmer_counter = collections.Counter()
     for seq in read_sequences:
         for p in range(len(seq) - k + 1):
             kmer = seq[p : p + k]
-            canonical_kmer = min(kmer, reverse_complement(kmer))
-            kmer_counter[canonical_kmer] += 1
+            kmer_counter[kmer] += 1
+
+    kmer_spectrum = collections.Counter(x for x in kmer_counter.values() if x <= 10)
+    print(kmer_spectrum)
 
     rng = np.random.default_rng(seed=seed)
-    vocab = set(
+    vocabulary = set(
         x
         for x, count in kmer_counter.items()
         if count >= min_multiplicity and rng.random() <= sample_fraction
     )
-    vocab |= set(reverse_complement(x) for x in vocab)
-    kmer_indices = {kmer: i for i, kmer in enumerate(vocab)}
+    vocabulary |= set(reverse_complement(x) for x in vocabulary)
+    kmer_indices = {kmer: i for i, kmer in enumerate(vocabulary)}
+    return kmer_indices
 
-    # Build matrix
+
+def build_feature_matrix(
+    read_sequences: Sequence[str],
+    kmer_indices: Mapping[str, int],
+    k: int,
+    *,
+    processes: int,
+) -> tuple[sp.csr_matrix, Sequence[Sequence[int]]]:
     row_ind, col_ind, data = [], [], []
     read_features = []
     for i, seq in enumerate(read_sequences):
@@ -102,14 +100,53 @@ def encode_reads(
 
         read_features.append(features_i)
 
-        kmer_counts = Counter(features_i)
+        kmer_counts = collections.Counter(features_i)
         for j, count in kmer_counts.items():
             row_ind.append(i)
             col_ind.append(j)
             data.append(count)
 
     feature_matrix = sp.csr_matrix(
-        (data, (row_ind, col_ind)), shape=(len(read_sequences), len(vocab))
+        (data, (row_ind, col_ind)), shape=(len(read_sequences), len(kmer_indices))
+    )
+    return feature_matrix, read_features
+
+
+def encode_reads(
+    fasta_path: str,
+    info_path: str,
+    k,
+    *,
+    sample_fraction: float,
+    min_multiplicity: int,
+    seed: int,
+    processes: int,
+):
+    """
+    Encodes sequencing reads from a gzipped FASTA file as a sparse matrix.
+    """
+    # Load reads info
+    info_df = pd.read_table(info_path).set_index("read_name")
+
+    # Load reads
+    read_names, read_orientations, read_sequences = load_reads(fasta_path=fasta_path)
+
+    # Build vocabulary
+    kmer_indices = build_kmer_index(
+        read_sequences=read_sequences,
+        k=k,
+        sample_fraction=sample_fraction,
+        min_multiplicity=min_multiplicity,
+        seed=seed,
+        processes=processes,
+    )
+
+    # Build matrix
+    feature_matrix, read_features = build_feature_matrix(
+        read_sequences=read_sequences,
+        kmer_indices=kmer_indices,
+        k=k,
+        processes=processes,
     )
 
     # Build metadata
@@ -117,7 +154,7 @@ def encode_reads(
         return {"+": "-", "-": "+"}[strand]
 
     rows = []
-    for i, seq in enumerate(read_sequences):
+    for i in range(len(read_sequences)):
         read_name = read_names[i]
         read_orientation = read_orientations[i]
         reference_strand = info_df.at[read_name, "reference_strand"]
@@ -149,6 +186,7 @@ def main(snakemake: "SnakemakeContext"):
     sample_fraction = snakemake.params["sample_fraction"]
     min_multiplicity = snakemake.params["min_multiplicity"]
     seed = snakemake.params["seed"]
+    threads = snakemake.threads
 
     feature_matrix, read_features, metadata = encode_reads(
         fasta_path=input_fasta_file,
@@ -157,6 +195,7 @@ def main(snakemake: "SnakemakeContext"):
         sample_fraction=sample_fraction,
         min_multiplicity=min_multiplicity,
         seed=seed,
+        processes=threads,
     )
     sp.save_npz(output_npz_file, feature_matrix)
     with gzip.open(output_json_file, "wt") as f:
