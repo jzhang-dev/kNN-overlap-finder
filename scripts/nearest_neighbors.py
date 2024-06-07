@@ -8,48 +8,15 @@ from math import ceil
 from scipy import sparse
 from scipy.sparse._csr import csr_matrix
 import numpy as np
-from numpy import matlib
+from numpy import matlib, ndarray
 import sklearn.neighbors
 import pynndescent
 import hnswlib
 import faiss
+from numba import njit, prange
 
 
 from data_io import parse_paf_file, get_sibling_id
-
-
-# def get_marker_matrix(
-#     read_markers, marker_weights, *, use_multiplicity=True, verbose=True
-# ) -> csr_matrix:
-#     read_list = list(read_markers)
-#     col_indices = {read: j for j, read in enumerate(read_list)}
-#     marker_list = list(marker_weights)
-#     row_indices = {marker: i for i, marker in enumerate(marker_list)}
-
-#     values = []
-#     rows = []
-#     columns = []
-#     for read, j in col_indices.items():
-#         if use_multiplicity:
-#             marker_multiplicity = collections.Counter(read_markers[read][0])
-#         else:
-#             marker_multiplicity = {x: 1 for x in read_markers[read][0]}
-#         for marker, count in marker_multiplicity.items():
-#             i = row_indices[marker]
-#             values.append(marker_weights[marker] * count)
-#             rows.append(i)
-#         columns += [j] * len(marker_multiplicity)
-#         if verbose and j % 10_000 == 0:
-#             print(j, end=" ")
-
-#     marker_matrix = sparse.coo_matrix(
-#         (values, (rows, columns)),
-#         shape=(len(row_indices), len(col_indices)),
-#         dtype=np.uint16,
-#     )
-#     marker_matrix = marker_matrix.T
-#     marker_matrix = csr_matrix(marker_matrix)
-#     return marker_matrix
 
 
 @dataclass
@@ -60,27 +27,33 @@ class _NearestNeighbors:
         raise NotImplementedError()
 
 
-def generalized_jaccard_similarity(x: csr_matrix | np.ndarray, y: csr_matrix | np.ndarray) -> float:
+def generalized_jaccard_similarity(
+    x: csr_matrix | np.ndarray, y: csr_matrix | np.ndarray
+) -> float:
     if x.shape[0] != 1 or y.shape[0] != 1:
         raise ValueError()
     if x.shape[1] != y.shape[1]:
         raise ValueError()
-    
-    s = sparse.vstack([x, y]) # TODO: dense
+
+    s = sparse.vstack([x, y])  # TODO: dense
     jaccard_similarity = s.min(axis=0).sum() / s.max(axis=0).sum()
     return jaccard_similarity
 
-def generalized_jaccard_distance(x: csr_matrix | np.ndarray, y: csr_matrix | np.ndarray) -> float:
+
+def generalized_jaccard_distance(
+    x: csr_matrix | np.ndarray, y: csr_matrix | np.ndarray
+) -> float:
     return 1 - generalized_jaccard_similarity(x, y)
+
 
 class ExactNearestNeighbors(_NearestNeighbors):
     def get_neighbors(
         self, data: csr_matrix | np.ndarray, metric="cosine", n_neighbors: int = 20
     ):
-        
+
         if metric == "jaccard" and isinstance(data, csr_matrix):
             data = data.toarray()
-        if metric == 'generalized_jaccard':
+        if metric == "generalized_jaccard":
             _metric = generalized_jaccard_distance
         else:
             _metric = metric
@@ -427,6 +400,136 @@ class WeightedLowHash(LowHash):
             min_cooccurence_count=min_cooccurence_count,
         )
         return nbr_matrix
+
+
+@njit(parallel=True)
+def _argpartition(arr, k, axis=0):
+    """
+    This function works like numpy.argpartition, 
+    but only returns the first k indices.
+    This function is designed for Numba,
+    as numpy.argpartition is not fully supported in Numba.
+
+    >>> a = np.array([[1, 2, 3], [3,0,1], [3, 3, 1], [5, 0, 0]])
+    >>> _argpartition(a, 2, axis=0)
+    array([[0, 3, 3],
+           [2, 1, 2]])
+    """
+    if axis == 0:
+        result = np.empty((k, arr.shape[1]), dtype=np.int64)
+        for i in prange(arr.shape[1]):
+            partitioned_indices = np.argpartition(arr[:, i], k)[:k]
+            result[:, i] = partitioned_indices
+    elif axis == 1:
+        result = np.empty((arr.shape[0], k), dtype=np.int64)
+        for i in prange(arr.shape[0]):
+            partitioned_indices = np.argpartition(arr[i, :], k)[:k]
+            result[i, :] = partitioned_indices
+    else:
+        raise ValueError("axis must be 0 or 1")
+    return result
+
+
+class JITWeightedLowHash(WeightedLowHash):
+    # TODO
+    
+    @staticmethod
+    def _get_random_numbers(seed: int, feature_count: int, dimension_num: int):
+        rng = np.random.default_rng(seed)
+        beta = rng.uniform(0, 1, (feature_count, dimension_num))
+        x = rng.uniform(0, 1, (feature_count, dimension_num))
+        u1 = rng.uniform(0, 1, (feature_count, dimension_num))
+        u2 = rng.uniform(0, 1, (feature_count, dimension_num))
+        return beta, x, u1, u2
+
+    @staticmethod
+    @njit
+    def _get_lowhash_positions(
+        weights: ndarray,
+        feature_indices: ndarray,
+        dimension_num: int,
+        lowhash_count: int,
+        beta: ndarray,
+        x: ndarray,
+        u1: ndarray,
+        u2: ndarray,
+    ) -> ndarray:
+        gamma = -np.log(np.multiply(u1[feature_indices, :], u2[feature_indices, :]))
+        t_matrix = np.floor(
+            np.divide(
+                np.repeat(np.log(weights), dimension_num).reshape(1, -1),
+                gamma,
+            )
+            + beta[feature_indices, :]
+        )
+        y_matrix = np.exp(np.multiply(gamma, t_matrix - beta[feature_indices, :]))
+        a_matrix = np.divide(
+            -np.log(x[feature_indices, :]),
+            np.divide(y_matrix, u1[feature_indices, :]),
+        )
+
+        lowhash_positions = _argpartition(a_matrix, lowhash_count, axis=0)
+        return lowhash_positions
+
+    def _pcws_low_hash(
+        self,
+        data: csr_matrix | np.ndarray,
+        lowhash_fraction: float | None = None,
+        lowhash_count: int | None = None,
+        repeats=1,
+        *,
+        seed=1,
+        use_weights=True,
+        verbose=True,
+    ) -> csr_matrix:
+        data = data.T.copy()  # rows for features; columns for instances
+        if not use_weights:
+            data[data > 0] = 1
+        feature_count, sample_count = data.shape
+        lowhash_buckets = sparse.dok_matrix(
+            (feature_count * repeats, sample_count), dtype=np.bool_
+        )
+
+        dimension_num = repeats
+        # fingerprints_k = np.zeros((instance_num, dimension_num))
+
+        beta, x, u1, u2 = self._get_random_numbers(
+            seed=seed, feature_count=feature_count, dimension_num=dimension_num
+        )
+
+        for j_sample in range(0, sample_count):
+            feature_indices = sparse.find(data[:, j_sample] > 0)[0]
+            hash_count = feature_indices.shape[0]
+            sample_lowhash_count = self._get_lowhash_count(
+                hash_count=hash_count,
+                lowhash_fraction=lowhash_fraction,
+                lowhash_count=lowhash_count,
+            )
+            weights = data[feature_indices, j_sample].todense()
+            lowhash_positions = self._get_lowhash_positions(
+                weights=weights,
+                feature_indices=feature_indices,
+                dimension_num=dimension_num,
+                lowhash_count=sample_lowhash_count,
+                beta=beta,
+                x=x,
+                u1=u1,
+                u2=u2,
+            )
+            lowhash_features = feature_indices[lowhash_positions]
+            bucket_indices = []
+            for k in range(repeats):
+                features = lowhash_features[:, k]
+                bucket_indices.append(features + k * feature_count)
+
+            lowhash_buckets[np.concatenate(bucket_indices), j_sample] = 1
+
+            if verbose and j_sample % 1_000 == 0:
+                print(j_sample, end=" ")
+        if verbose:
+            print("")
+        lowhash_buckets = sparse.csr_matrix(lowhash_buckets)
+        return lowhash_buckets
 
 
 class PAFNearestNeighbors(_NearestNeighbors):

@@ -5,9 +5,9 @@ import collections
 from typing import Type, Sequence, Mapping, Any, Collection, MutableMapping
 from dataclasses import dataclass
 import numpy as np
+from numpy import ndarray
 import networkx as nx
 from intervaltree import Interval, IntervalTree
-
 
 from data_io import get_sibling_id, get_fwd_id, parse_paf_file
 from align import _PairwiseAligner, run_multiprocess_alignment, AlignmentResult
@@ -31,6 +31,24 @@ def get_interval_trees(
     return tree_dict
 
 
+def get_overlap_candidates(
+    neighbor_indices: ndarray,
+    n_neighbors: int,
+    read_ids: Sequence[int],
+):
+    if neighbor_indices.shape[1] < n_neighbors:
+        raise ValueError("Not enough neighbors in `neighbor_indices`.")
+    _read_ids = np.array(read_ids)
+    overlap_candidates = []
+
+    for i1, row in enumerate(neighbor_indices):
+        k1 = _read_ids[i1]
+        row = row[(row >= 0) & (row != i1)]
+        overlap_candidates += [(k1, _read_ids[i2]) for i2 in row[:n_neighbors]]
+
+    return overlap_candidates
+
+
 class OverlapGraph(nx.Graph):
 
     @classmethod
@@ -50,6 +68,25 @@ class OverlapGraph(nx.Graph):
         read_graph = cls()
         read_graph.add_edges_from(candidates)
         return read_graph
+
+    @classmethod
+    def from_neighbor_indices(
+        cls,
+        neighbor_indices: ndarray,
+        n_neighbors: int,
+        read_ids: Sequence[int],
+        *,
+        require_mutual_neighbors: bool = False,
+    ):
+        overlap_candidates = get_overlap_candidates(
+            neighbor_indices=neighbor_indices,
+            n_neighbors=n_neighbors,
+            read_ids=read_ids,
+        )
+        return cls.from_overlap_candidates(
+            candidates=overlap_candidates,
+            require_mutual_neighbors=require_mutual_neighbors,
+        )
 
     @classmethod
     def from_pairwise_alignment(
@@ -123,12 +160,12 @@ class OverlapGraph(nx.Graph):
                     )
             if len(parent_reads) == 1:
                 contained_reads.add(read_0)
-        
+
         # Label contained reads
         nx.set_node_attributes(graph, "contained", False)
         for read in contained_reads:
-            graph.nodes[read]['contained'] = True
-        
+            graph.nodes[read]["contained"] = True
+
         # Identify non-redundant overlaps
         for node_0 in graph.nodes():
             nearest_left_node = None
@@ -154,8 +191,6 @@ class OverlapGraph(nx.Graph):
                 graph[node_0][nearest_right_node]["redundant"] = False
 
         return graph
-
-
 
     def align_edges(
         self,
@@ -184,12 +219,11 @@ class OverlapGraph(nx.Graph):
         return alignment_dict
 
 
-
 def remove_false_edges(graph, reference_graph):
-    false_edges= []
+    false_edges = []
     for u, v in graph.edges:
         if not reference_graph.has_edge(u, v):
-            false_edges.append((u,v))
+            false_edges.append((u, v))
     graph.remove_edges_from(false_edges)
 
 
