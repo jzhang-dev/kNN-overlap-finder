@@ -314,14 +314,14 @@ class WeightedLowHash(LowHash):
             (feature_count * repeats, sample_count), dtype=np.bool_
         )
 
-        dimension_num = repeats
+        dimension_count = repeats
         # fingerprints_k = np.zeros((instance_num, dimension_num))
 
         rng = np.random.default_rng(seed)
-        beta = rng.uniform(0, 1, (feature_count, dimension_num))
-        x = rng.uniform(0, 1, (feature_count, dimension_num))
-        u1 = rng.uniform(0, 1, (feature_count, dimension_num))
-        u2 = rng.uniform(0, 1, (feature_count, dimension_num))
+        beta = rng.uniform(0, 1, (feature_count, dimension_count))
+        x = rng.uniform(0, 1, (feature_count, dimension_count))
+        u1 = rng.uniform(0, 1, (feature_count, dimension_count))
+        u2 = rng.uniform(0, 1, (feature_count, dimension_count))
 
         for j_sample in range(0, sample_count):
             feature_indices = sparse.find(data[:, j_sample] > 0)[0]
@@ -331,7 +331,7 @@ class WeightedLowHash(LowHash):
                     matlib.repmat(
                         np.log(data[feature_indices, j_sample].todense()),
                         1,
-                        dimension_num,
+                        dimension_count,
                     ),
                     gamma,
                 )
@@ -405,7 +405,7 @@ class WeightedLowHash(LowHash):
 @njit(parallel=True)
 def _argpartition(arr, k, axis=0):
     """
-    This function works like numpy.argpartition, 
+    This function works like numpy.argpartition,
     but only returns the first k indices.
     This function is designed for Numba,
     as numpy.argpartition is not fully supported in Numba.
@@ -431,23 +431,24 @@ def _argpartition(arr, k, axis=0):
 
 
 class JITWeightedLowHash(WeightedLowHash):
-    # TODO
-    
+    # This is not faster. Why?
+
     @staticmethod
-    def _get_random_numbers(seed: int, feature_count: int, dimension_num: int):
+    def _get_random_numbers(seed: int, feature_count: int, dimension_count: int):
         rng = np.random.default_rng(seed)
-        beta = rng.uniform(0, 1, (feature_count, dimension_num))
-        x = rng.uniform(0, 1, (feature_count, dimension_num))
-        u1 = rng.uniform(0, 1, (feature_count, dimension_num))
-        u2 = rng.uniform(0, 1, (feature_count, dimension_num))
+        beta = rng.uniform(0, 1, (feature_count, dimension_count))
+        x = rng.uniform(0, 1, (feature_count, dimension_count))
+        u1 = rng.uniform(0, 1, (feature_count, dimension_count))
+        u2 = rng.uniform(0, 1, (feature_count, dimension_count))
         return beta, x, u1, u2
+
 
     @staticmethod
     @njit
     def _get_lowhash_positions(
         weights: ndarray,
         feature_indices: ndarray,
-        dimension_num: int,
+        dimension_count: int,
         lowhash_count: int,
         beta: ndarray,
         x: ndarray,
@@ -457,7 +458,9 @@ class JITWeightedLowHash(WeightedLowHash):
         gamma = -np.log(np.multiply(u1[feature_indices, :], u2[feature_indices, :]))
         t_matrix = np.floor(
             np.divide(
-                np.repeat(np.log(weights), dimension_num).reshape(1, -1),
+                np.repeat(np.log(weights), dimension_count).reshape(
+                    -1, dimension_count
+                ),
                 gamma,
             )
             + beta[feature_indices, :]
@@ -467,7 +470,6 @@ class JITWeightedLowHash(WeightedLowHash):
             -np.log(x[feature_indices, :]),
             np.divide(y_matrix, u1[feature_indices, :]),
         )
-
         lowhash_positions = _argpartition(a_matrix, lowhash_count, axis=0)
         return lowhash_positions
 
@@ -490,11 +492,11 @@ class JITWeightedLowHash(WeightedLowHash):
             (feature_count * repeats, sample_count), dtype=np.bool_
         )
 
-        dimension_num = repeats
+        dimension_count = repeats
         # fingerprints_k = np.zeros((instance_num, dimension_num))
 
         beta, x, u1, u2 = self._get_random_numbers(
-            seed=seed, feature_count=feature_count, dimension_num=dimension_num
+            seed=seed, feature_count=feature_count, dimension_count=dimension_count
         )
 
         for j_sample in range(0, sample_count):
@@ -509,7 +511,7 @@ class JITWeightedLowHash(WeightedLowHash):
             lowhash_positions = self._get_lowhash_positions(
                 weights=weights,
                 feature_indices=feature_indices,
-                dimension_num=dimension_num,
+                dimension_count=dimension_count,
                 lowhash_count=sample_lowhash_count,
                 beta=beta,
                 x=x,

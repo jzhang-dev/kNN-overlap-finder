@@ -164,7 +164,7 @@ rule run_daligner:
     
     params:
         k = 16,
-        error_rate_tolerance=".1",
+        average_correlation=".9",
         min_alignment_length=1000,
         min_alignment_score=50,
     threads: 8
@@ -174,11 +174,12 @@ rule run_daligner:
         """
         daligner \
           -k{params.k} \
-          -e{params.error_rate_tolerance} \
+          -e{params.average_correlation} \
           -l{params.min_alignment_length} \
           -s{params.min_alignment_score} \
           -T{threads} \
-          {input.fasta} \
+          -v \
+          {input.fasta} {input.fasta} \
         | gzip -c > {output.maf}
         """
     
@@ -241,4 +242,10 @@ rule test6:
 rule test7:
     input:
         expand("data/evaluation/CHM13/{region}/pbsim_ONT_93_30k/kmer_k{k}/", 
+        region=["chr6_50M"], k=[16])
+
+
+rule test8:
+    input:
+        expand("data/daligner/CHM13/{region}/pbsim_ONT_93_30k/alignment.maf.gz",
         region=["chr6_50M"], k=[16])
