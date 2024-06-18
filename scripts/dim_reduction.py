@@ -1,9 +1,13 @@
+from dataclasses import dataclass
 import scipy as sp
 import numpy as np
+from numpy.typing import NDArray
+from scipy.sparse import csr_matrix
+from scBiMapping import scBiMapping
+import anndata
 
-# TODO: weighted_by_sd
 
-class SpectralMatrixFree:
+class _SpectralMatrixFree:
     """
     Perform dimension reduction using Laplacian Eigenmaps.
     
@@ -57,5 +61,37 @@ class SpectralMatrixFree:
         n = X.shape[0]
         A = sp.sparse.linalg.LinearOperator((n, n), matvec=f, dtype=np.float64)
         return sp.sparse.linalg.eigsh(A, k=k)
+
+
+
+class _DimensionReduction:
+
+    def transform(self, data: csr_matrix | NDArray, n_dimensions:int) -> NDArray:
+        raise NotImplementedError
+    
+
+class SpectralEmbedding(_DimensionReduction):
+    def transform(self, data: csr_matrix | NDArray, n_dimensions: int, weighted_by_sd: bool = True) -> NDArray:
+        reducer = _SpectralMatrixFree(out_dim=n_dimensions)
+        reducer.fit(data)
+        _, embedding = reducer.transform(weighted_by_sd=weighted_by_sd)
+        return embedding
+    
+
+
+class scBiMapEmbedding(_DimensionReduction):
+
+    def transform(self, data: csr_matrix | NDArray, n_dimensions: int) -> NDArray:
+        adata = anndata.AnnData(X=data)
+        scBiMapping(adata, n_embedding=n_dimensions)
+        embedding: NDArray = adata.obsm['U'] # type: ignore
+        return embedding
+    
+
+
+
+
+
+
 
 

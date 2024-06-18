@@ -484,7 +484,7 @@ class JITWeightedLowHash(WeightedLowHash):
         use_weights=True,
         verbose=True,
     ) -> csr_matrix:
-        data = data.T.copy()  # rows for features; columns for instances
+        data = data.T.copy()  # rows for features; columns for instances; this will be a sparse CSC matrix
         if not use_weights:
             data[data > 0] = 1
         feature_count, sample_count = data.shape

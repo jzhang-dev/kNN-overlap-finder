@@ -1,6 +1,5 @@
 REFERENCE_FASTA_PATH = dict(
-    HG002="data/reference/HG002/hg002v1.0.1.fasta.gz",
-    CHM13="data/reference/CHM13/chm13v2.0.fa.gz",
+    CHM13="/home/ecs-user/workspace/shared_data/reference_genome/CHM13/chm13v2.0.fa.gz",
 )
 REGIONS = dict(
     TRA=("chr14", 14819498, 17749884),

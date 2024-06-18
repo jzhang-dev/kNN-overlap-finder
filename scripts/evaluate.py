@@ -8,8 +8,8 @@ import numpy as np
 from numpy import ndarray
 import sharedmem
 
-from nearest_neighbors import _NearestNeighbors
-from dim_reduction import SpectralMatrixFree
+from nearest_neighbors import _NearestNeighbors, ExactNearestNeighbors
+from dim_reduction import _DimensionReduction, SpectralEmbedding, scBiMapEmbedding
 from graph import OverlapGraph, get_overlap_statistics
 from align import cWeightedSemiglobalAligner, run_multiprocess_alignment
 
@@ -17,37 +17,14 @@ from align import cWeightedSemiglobalAligner, run_multiprocess_alignment
 @dataclass
 class NearestNeighborsConfig:
     data: csr_matrix = field(repr=False)
-    method: Type[_NearestNeighbors]
     description: str = ""
     binarize: bool = False
     tfidf: bool = False
-    dim_reduction: int | None = None
-    nearest_neighbor_kw: dict = field(default_factory=dict, repr=False)
+    dimension_reduction_method: Type[_DimensionReduction] | None = None
+    dimension_reduction_kw: dict = field(default_factory=dict, repr=False)
+    nearest_neighbors_method: Type[_NearestNeighbors] = ExactNearestNeighbors
+    nearest_neighbors_kw: dict = field(default_factory=dict, repr=False)
 
-    # def compute_nearest_neighbors(self, n_neighbors: int, *, verbose=True):
-    #     data = self.data.copy()
-    #     start_time = time.time()
-    #     if self.binarize:
-    #         if verbose:
-    #             print("Binarization.")
-    #         data[data > 0] = 1
-    #     if self.tfidf:
-    #         if verbose:
-    #             print("TF-IDF transform.")
-    #         data = TfidfTransformer(use_idf=True, smooth_idf=True).fit_transform(data)
-    #     if self.dim_reduction is not None:
-    #         if verbose:
-    #             print("Dimension reduction.")
-    #         reducer = SpectralMatrixFree(self.dim_reduction)
-    #         reducer.fit(data)
-    #         _, data = reducer.transform()
-    #     self._neighbor_indices = self.method().get_neighbors(
-    #         data, n_neighbors=n_neighbors, **self.nearest_neighbor_kw
-    #     )
-    #     elapsed_time = time.time() - start_time
-    #     self._elapsed_time = elapsed_time
-    #     if verbose:
-    #         print(f"Elapsed time: {elapsed_time:.2f} s")
 
     def get_neighbors(
         self, data: csr_matrix, n_neighbors: int, *, verbose=True
@@ -65,15 +42,13 @@ class NearestNeighborsConfig:
                 print("TF-IDF transform.")
             _data = TfidfTransformer(use_idf=True, smooth_idf=True).fit_transform(_data)
 
-        if self.dim_reduction is not None:
+        if self.dimension_reduction_method is not None:
             if verbose:
                 print("Dimension reduction.")
-            reducer = SpectralMatrixFree(self.dim_reduction)
-            reducer.fit(_data)
-            _, _data = reducer.transform()
+            _data = self.dimension_reduction_method().transform(_data, **self.dimension_reduction_kw)
 
-        neighbor_indices = self.method().get_neighbors(
-            _data, n_neighbors=n_neighbors, **self.nearest_neighbor_kw
+        neighbor_indices = self.nearest_neighbors_method().get_neighbors(
+            _data, n_neighbors=n_neighbors, **self.nearest_neighbors_kw
         )
         elapsed_time = time.time() - start_time
         if verbose:
