@@ -28,10 +28,12 @@ class NearestNeighborsConfig:
 
     def get_neighbors(
         self, data: csr_matrix, n_neighbors: int, *, verbose=True
-    ) -> ndarray:
-        _data: csr_matrix | ndarray = data.copy()
-        start_time = time.time()
+    ) -> tuple[ndarray, Mapping[str, float], Mapping[str, float]]:
+        elapsed_time = {}
+        peak_memory = {} # TODO
 
+        _data: csr_matrix | ndarray = data.copy()
+        
         if self.binarize:
             if verbose:
                 print("Binarization.")
@@ -40,51 +42,28 @@ class NearestNeighborsConfig:
         if self.tfidf:
             if verbose:
                 print("TF-IDF transform.")
+            start_time = time.time()
             _data = TfidfTransformer(use_idf=True, smooth_idf=True).fit_transform(_data)
-
+            elapsed_time['tfidf'] = time.time() - start_time
         if self.dimension_reduction_method is not None:
             if verbose:
                 print("Dimension reduction.")
+            start_time = time.time()
             _data = self.dimension_reduction_method().transform(_data, **self.dimension_reduction_kw)
-
+            elapsed_time['dimension_reduction'] = time.time() - start_time
+        
+        if verbose:
+            print("Nearest neighbors.")
+        start_time = time.time()
         neighbor_indices = self.nearest_neighbors_method().get_neighbors(
             _data, n_neighbors=n_neighbors, **self.nearest_neighbors_kw
         )
-        elapsed_time = time.time() - start_time
+        elapsed_time['nearest_neighbors'] = time.time() - start_time
         if verbose:
-            print(f"Finished {self}. Elapsed time: {elapsed_time:.2f} s")
-        return neighbor_indices
+            print(f"Finished {self}. Elapsed time: {elapsed_time}. Peak memory: {peak_memory}")
+        return neighbor_indices, elapsed_time, peak_memory
 
-    # def _get_overlap_candidates(self, n_neighbors: int, read_ids, *, verbose=True):
-    #     neighbor_indices = self._neighbor_indices
-    #     if neighbor_indices is None:
-    #         raise TypeError()
-    #     if neighbor_indices.shape[1] < n_neighbors:
-    #         raise ValueError("Not enough neighbors computed.")
-    #     overlap_candidates = []
 
-    #     for i1, row in enumerate(neighbor_indices):
-    #         k1 = read_ids[i1]
-    #         row = [i2 for i2 in row if i2 != i1 and i2 >= 0]
-    #         overlap_candidates += [(k1, read_ids[i2]) for i2 in row[:n_neighbors]]
-
-    #     return overlap_candidates
-
-    # def get_overlap_graph(
-    #     self,
-    #     n_neighbors: int,
-    #     read_ids,
-    #     *,
-    #     require_mutual_neighbors: bool = False,
-    #     verbose=True,
-    # ):
-    #     overlap_candidates = self._get_overlap_candidates(
-    #         n_neighbors=n_neighbors, read_ids=read_ids, verbose=verbose
-    #     )
-    #     graph = OverlapGraph.from_overlap_candidates(
-    #         overlap_candidates, require_mutual_neighbors=require_mutual_neighbors
-    #     )
-    #     return graph
 
 
 def mp_compute_nearest_neighbors(
@@ -94,23 +73,28 @@ def mp_compute_nearest_neighbors(
     *,
     processes=4,
     verbose=True,
-) -> Mapping[int, ndarray]:
+) -> tuple[Mapping[int, ndarray], Mapping, Mapping]:
 
     if verbose:
         print(f"Evaluating {len(configs)} configs using {processes} processes.")
 
     nbr_dict = {}
+    time_dict = {}
+    memory_dict = {}
     with sharedmem.MapReduce(np=processes) as pool:
 
         def work(i):
             if verbose:
                 print(i, end=" ")
             config = configs[i]
-            neighbor_indices = config.get_neighbors(data=data, n_neighbors=n_neighbors, verbose=verbose)
-            return i, neighbor_indices
+            result = config.get_neighbors(data=data, n_neighbors=n_neighbors, verbose=verbose)
+            return i, result
 
-        def reduce(i, neighbor_indices):
+        def reduce(i, result):
+            neighbor_indices, elapsed_time, peak_memory = result
             nbr_dict[i] = neighbor_indices
+            time_dict[i] = elapsed_time
+            memory_dict[i] = peak_memory
 
 
         pool.map(work, range(len(configs)), reduce=reduce)
@@ -118,50 +102,6 @@ def mp_compute_nearest_neighbors(
     if verbose:
         print("")
 
-    return nbr_dict
+    return nbr_dict, time_dict, memory_dict
 
 
-# def mp_evaluate_configs(
-#     configs: Sequence[NearestNeighborsConfig],
-#     feature_matrix: csr_matrix,
-#     read_features: Mapping[int, Sequence[int]],
-#     feature_weights: Mapping[int, int],
-#     reference_graph: OverlapGraph,
-#     *,
-#     processes=8,
-#     verbose=True,
-# ):
-#     data = feature_matrix
-#     configs = list(configs)
-#     if verbose:
-#         print(f"Evaluating {len(configs)} configs using {processes} processes.")
-
-#     def print_stats(stats):
-#         if stats is None:
-#             raise TypeError()
-#         print(
-#             f"precision={stats['precision']:.3f}",
-#             f"nr_precision={stats['nr_precision']:.3f}",
-#             f"recall={stats['recall']:.3f}",
-#             f"nr_recall={stats['nr_recall']:.3f}",
-#             "\n",
-#         )
-
-#     # Nearest neighbors
-#     with sharedmem.MapReduce(np=processes) as pool:
-
-#         def work(i):
-#             config = configs[i]
-#             config.compute_pre_alignment_graph(
-#                 data=data, reference_graph=reference_graph, read_ids=list(read_features)
-#             )
-#             return i, config
-
-#         def reduce(i, config):
-#             configs[i] = config
-#             print(config)
-#             print_stats(config.pre_align_stats)
-
-#         pool.map(work, range(len(configs)), reduce=reduce)
-
-#     return configs
