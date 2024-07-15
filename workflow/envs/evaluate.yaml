@@ -3,18 +3,19 @@ channels:
   - bioconda
   - defaults
 dependencies:
+  - anndata == 0.10.7 
   - biopython 
-  - hnswlib
+  - hnswlib == 0.7.0
   - matplotlib 
   - nbconvert
   - notebook
   - numpy 
   - pandas 
-  - pynndescent
-  - python >= 3.9
+  - pynndescent == 0.5.12
+  - python == 3.12.3
   - python-intervaltree
   - requests
-  - scanpy
-  - scikit-learn 
+  - scanpy == 1.10.1
+  - scikit-learn == 1.5.0
 
 
