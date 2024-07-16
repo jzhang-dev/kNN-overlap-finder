@@ -17,5 +17,6 @@ dependencies:
   - requests
   - scanpy == 1.10.1
   - scikit-learn == 1.5.0
+  - sharedmem ~= 0.3.5
 
 
