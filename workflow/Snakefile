@@ -183,6 +183,24 @@ rule run_daligner:
         """
     
 
+rule get_neighbors:
+    input:
+        feature_matrix="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/feature_matrix.npz",
+        read_features="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/read_features.json.gz",
+        metadata="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/metadata.tsv.gz",
+        paf="data/minimap2/{sample}/{region}/{platform}/alignment.paf.gz",
+    output:
+        nbr_indice="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_nbr_matrix.npz",
+        overlap="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_overlap_stat.tsv"
+    log:
+        notebook="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_get_neighbors.py.ipynb",
+    threads: 8
+    conda:
+        "envs/evaluate.yaml"
+    notebook:
+        "notebooks/get_neighbors_indice.smk.py.ipynb"
+
+
 
 rule evaluate_configs:
     input:
@@ -243,8 +261,6 @@ rule test7:
         expand("data/evaluation/CHM13/{region}/pbsim_ONT_93_30k/kmer_k{k}/", 
         region=["chr6_50M"], k=[16])
 
-
-rule test8:
+rule mytest1:
     input:
-        expand("data/daligner/CHM13/{region}/pbsim_ONT_93_30k/alignment.maf.gz",
-        region=["chr6_50M"], k=[16])
+        "data/evaluation/CHM13/HLA/pbsim_ONT_93_30k/kmer_k16/Exact_Euclidean_None_TF_nbr_matrix.npz"

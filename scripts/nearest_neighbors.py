@@ -585,16 +585,13 @@ class ProductQuantization(_NearestNeighbors):
         self,
         data: csr_matrix | np.ndarray,
         n_neighbors: int,
-        metric: Literal["euclidean"] = "euclidean",
+        metric: Literal["euclidean","cosine"] = "euclidean",
         *,
         m=8,
         nbits=8,
         seed=455390,
     ) -> np.ndarray:
-        if metric == "euclidean":
-            faiss_metric = faiss.METRIC_L2
-        else:
-            raise ValueError()
+
 
         if sparse.issparse(data):
             raise TypeError("ProductQuantization does not support sparse arrays.")
@@ -609,8 +606,57 @@ class ProductQuantization(_NearestNeighbors):
             new_feature_count = feature_count
         assert data.shape[1]
 
-        index_pq = faiss.IndexPQ(new_feature_count, m, nbits, faiss_metric)
-        index_pq.train(data)  # type: ignore
-        index_pq.add(data)  # type: ignore
-        _, nbr_indices = index_pq.search(data, n_neighbors)  # type: ignore
+        if metric == "euclidean":
+            measure = faiss.METRIC_L2
+        else:
+            measure = faiss.METRIC_INNER_PRODUCT
+            data = np.array(data,order='C').astype('float32')
+            faiss.normalize_L2(data)
+        
+        param = "PQ8"
+        index = faiss.index_factory(new_feature_count,param,measure)
+        index.train(data)
+        index.add(data)
+        _, nbr_indices = index.search(data, n_neighbors)  # type: ignore
         return nbr_indices
+
+class IVFProductQuantization(_NearestNeighbors):
+    def get_neighbors(
+        self,
+        data: csr_matrix | np.ndarray,
+        n_neighbors: int,
+        metric: Literal["euclidean","cosine"] = "euclidean",
+        *,
+        m=8,
+        nbits=8,
+        seed=455390,
+    ) -> np.ndarray:
+
+
+        if sparse.issparse(data):
+            raise TypeError("ProductQuantization does not support sparse arrays.")
+        feature_count = data.shape[1]
+        if feature_count % m != 0:
+            new_feature_count = feature_count // m * m
+            feature_indices = np.random.default_rng(seed).choice(
+                feature_count, new_feature_count, replace=False, shuffle=False
+            )
+            data = data[:, feature_indices]
+        else:
+            new_feature_count = feature_count
+        assert data.shape[1]
+
+        if metric == "euclidean":
+            measure = faiss.METRIC_L2
+        else:
+            measure = faiss.METRIC_INNER_PRODUCT
+            data = np.array(data,order='C').astype('float32')
+            faiss.normalize_L2(data)
+        
+        param = "IVF100,PQ8"
+        index = faiss.index_factory(new_feature_count,param,measure)
+        index.train(data)
+        index.add(data)
+        _, nbr_indices = index.search(data, n_neighbors)  # type: ignore
+        return nbr_indices
+

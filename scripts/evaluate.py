@@ -2,11 +2,12 @@ import os, gzip, pickle
 import time
 from sklearn.feature_extraction.text import TfidfTransformer
 from scipy.sparse._csr import csr_matrix
-from typing import Sequence, Type, Mapping
+from typing import Sequence, Type, Mapping,Literal
 from dataclasses import dataclass, field
 import numpy as np
 from numpy import ndarray
 import sharedmem
+
 
 from nearest_neighbors import _NearestNeighbors, ExactNearestNeighbors
 from dim_reduction import _DimensionReduction, SpectralEmbedding, scBiMapEmbedding
@@ -19,7 +20,7 @@ class NearestNeighborsConfig:
     data: csr_matrix = field(repr=False)
     description: str = ""
     binarize: bool = False
-    tfidf: bool = False
+    tfidf: Literal["TF","IDF","TF-IDF",'None'] = 'None',
     dimension_reduction_method: Type[_DimensionReduction] | None = None
     dimension_reduction_kw: dict = field(default_factory=dict, repr=False)
     nearest_neighbors_method: Type[_NearestNeighbors] = ExactNearestNeighbors
@@ -34,17 +35,24 @@ class NearestNeighborsConfig:
 
         _data: csr_matrix | ndarray = data.copy()
         
-        if self.binarize:
+        if self.tfidf == 'TF':
             if verbose:
-                print("Binarization.")
-            _data[_data > 0] = 1
-
-        if self.tfidf:
-            if verbose:
-                print("TF-IDF transform.")
+                print("TF transform.")
+        elif self.tfidf == 'IDF':
             start_time = time.time()
+            if verbose:
+                print("IDF transform.")
+            _data[_data > 0] = 1
             _data = TfidfTransformer(use_idf=True, smooth_idf=True).fit_transform(_data)
             elapsed_time['tfidf'] = time.time() - start_time
+        elif self.tfidf == 'TF-IDF':
+            start_time = time.time()
+            if verbose:
+                print("TF-IDF transform.")
+            _data = TfidfTransformer(use_idf=True, smooth_idf=True).fit_transform(_data)
+            elapsed_time['tfidf'] = time.time() - start_time
+
+
         if self.dimension_reduction_method is not None:
             if verbose:
                 print("Dimension reduction.")
