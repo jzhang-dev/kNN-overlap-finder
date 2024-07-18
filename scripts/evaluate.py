@@ -19,7 +19,6 @@ from align import cWeightedSemiglobalAligner, run_multiprocess_alignment
 class NearestNeighborsConfig:
     data: csr_matrix = field(repr=False)
     description: str = ""
-    binarize: bool = False
     tfidf: Literal["TF","IDF","TF-IDF",'None'] = 'None',
     dimension_reduction_method: Type[_DimensionReduction] | None = None
     dimension_reduction_kw: dict = field(default_factory=dict, repr=False)

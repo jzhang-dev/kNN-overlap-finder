@@ -263,4 +263,4 @@ rule test7:
 
 rule mytest1:
     input:
-        "data/evaluation/CHM13/HLA/pbsim_ONT_93_30k/kmer_k16/Exact_Euclidean_None_TF_nbr_matrix.npz"
+        "data/evaluation/CHM13/HLA/pbsim_ONT_93_30k/kmer_k16/PQ_Euclidean_scBiMap_100d_IDF_nbr_matrix.npz"
