@@ -194,7 +194,7 @@ rule get_neighbors:
         overlap="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_overlap_stat.tsv"
     log:
         notebook="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_get_neighbors.py.ipynb",
-    threads: 8
+    threads: 1
     conda:
         "envs/evaluate.yaml"
     notebook:
@@ -263,4 +263,20 @@ rule test7:
 
 rule mytest1:
     input:
-        "data/evaluation/CHM13/HLA/pbsim_ONT_93_30k/kmer_k16/PQ_Euclidean_scBiMap_100d_IDF_nbr_matrix.npz"
+        expand("data/evaluation/CHM13/HLA/pbsim_ONT_93_30k/kmer_k16/{method}_nbr_matrix.npz",
+        method=['PQ_Euclidean_scBiMap_500d_TF',
+ 'PQ_Euclidean_scBiMap_500d_IDF',
+ 'PQ_Euclidean_scBiMap_500d_TF-IDF',
+ 'PQ_Euclidean_scBiMap_500d_None',
+ 'PQ_Cosine_scBiMap_500d_TF',
+ 'PQ_Cosine_scBiMap_500d_IDF',
+ 'PQ_Cosine_scBiMap_500d_TF-IDF',
+ 'PQ_Cosine_scBiMap_500d_None',
+ 'HNSW_Euclidean_scBiMap_500d_TF',
+ 'HNSW_Euclidean_scBiMap_500d_IDF',
+ 'HNSW_Euclidean_scBiMap_500d_TF-IDF',
+ 'HNSW_Euclidean_scBiMap_500d_None',
+ 'HNSW_Cosine_scBiMap_500d_TF',
+ 'HNSW_Cosine_scBiMap_500d_IDF',
+ 'HNSW_Cosine_scBiMap_500d_TF-IDF',
+ 'HNSW_Cosine_scBiMap_500d_None'])

@@ -17,13 +17,15 @@ from align import cWeightedSemiglobalAligner, run_multiprocess_alignment
 
 @dataclass
 class NearestNeighborsConfig:
-    data: csr_matrix = field(repr=False)
     description: str = ""
     tfidf: Literal["TF","IDF","TF-IDF",'None'] = 'None',
     dimension_reduction_method: Type[_DimensionReduction] | None = None
     dimension_reduction_kw: dict = field(default_factory=dict, repr=False)
     nearest_neighbors_method: Type[_NearestNeighbors] = ExactNearestNeighbors
     nearest_neighbors_kw: dict = field(default_factory=dict, repr=False)
+
+    __slots__ = ('description','tfidf','dimension_reduction_method','dimension_reduction_kw',
+                 'nearest_neighbors_method','nearest_neighbors_kw')
 
 
     def get_neighbors(
