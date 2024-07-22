@@ -263,7 +263,7 @@ rule test7:
 
 rule mytest1:
     input:
-        expand("data/evaluation/CHM13/HLA/pbsim_ONT_93_30k/kmer_k16/{method}_nbr_matrix.npz",
+        expand("data/evaluation/CHM13/IGK/pbsim_ONT_93_30k/kmer_k16/{method}_nbr_matrix.npz",
         method=['PQ_Euclidean_scBiMap_500d_TF',
  'PQ_Euclidean_scBiMap_500d_IDF',
  'PQ_Euclidean_scBiMap_500d_TF-IDF',
@@ -280,3 +280,12 @@ rule mytest1:
  'HNSW_Cosine_scBiMap_500d_IDF',
  'HNSW_Cosine_scBiMap_500d_TF-IDF',
  'HNSW_Cosine_scBiMap_500d_None'])
+rule mytest2:
+     input:
+        expand("data/evaluation/CHM13/IGK/pbsim_ONT_93_30k/kmer_k16/{method}_nbr_matrix.npz",
+        method=['Exact_Euclidean_scBiMap_500d_TF', 'Exact_Euclidean_scBiMap_500d_IDF', 'Exact_Euclidean_scBiMap_500d_TF-IDF', 'Exact_Euclidean_scBiMap_500d_None', 'Exact_Cosine_scBiMap_500d_TF', 'Exact_Cosine_scBiMap_500d_IDF', 'Exact_Cosine_scBiMap_500d_TF-IDF', 'Exact_Cosine_scBiMap_500d_None', 'LowHash_Jaccard_None_TF', 'LowHash_Jaccard_None_IDF', 'LowHash_Jaccard_None_TF-IDF', 'LowHash_Jaccard_None_None', 'WeightedLowHash_Jaccard_None_TF', 'WeightedLowHash_Jaccard_None_IDF', 'WeightedLowHash_Jaccard_None_TF-IDF', 'WeightedLowHash_Jaccard_None_None', 'MinHash_Jaccard_None_TF', 'MinHash_Jaccard_None_IDF', 'MinHash_Jaccard_None_TF-IDF', 'MinHash_Jaccard_None_None', 'WeightedMinHash_Jaccard_None_TF', 'WeightedMinHash_Jaccard_None_IDF', 'WeightedMinHash_Jaccard_None_TF-IDF', 'WeightedMinHash_Jaccard_None_None'])
+
+rule mytest3:
+     input:
+         expand("data/evaluation/CHM13/IGK/pbsim_ONT_93_30k/kmer_k16/{method}_nbr_matrix.npz",
+         method=['Exact_Euclidean_None_TF', 'Exact_Euclidean_None_IDF', 'Exact_Euclidean_None_TF-IDF','Exact_Euclidean_None_None', 'Exact_Cosine_None_TF', 'Exact_Cosine_None_IDF', 'Exact_Cosine_None_TF-IDF', 'Exact_Cosine_None_None'])

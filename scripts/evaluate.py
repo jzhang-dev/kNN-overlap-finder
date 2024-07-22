@@ -24,10 +24,6 @@ class NearestNeighborsConfig:
     nearest_neighbors_method: Type[_NearestNeighbors] = ExactNearestNeighbors
     nearest_neighbors_kw: dict = field(default_factory=dict, repr=False)
 
-    __slots__ = ('description','tfidf','dimension_reduction_method','dimension_reduction_kw',
-                 'nearest_neighbors_method','nearest_neighbors_kw')
-
-
     def get_neighbors(
         self, data: csr_matrix, n_neighbors: int, *, verbose=True
     ) -> tuple[ndarray, Mapping[str, float], Mapping[str, float]]:
