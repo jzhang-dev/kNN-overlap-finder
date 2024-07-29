@@ -1,5 +1,5 @@
 REFERENCE_FASTA_PATH = dict(
-    CHM13="/home/ecs-user/workspace/shared_data/reference_genome/CHM13/chm13v2.0.fa.gz",
+    CHM13="/home/miaocj/docker_dir/data/reference_genome/CHM13/chm13v2.0.fa.gz",
 )
 REGIONS = dict(
     TRA=("chr14", 14819498, 17749884),
@@ -118,11 +118,38 @@ rule get_pbsim_metadata:
     script:
         "scripts/get_pbsim_read_info.smk.py"
 
+rule alignment_of_real_data_and_reference:
+    input:
+         reference="data/regional_reads/{sample}/{region}/{platform}/genome.fasta",
+         fastq="data/regional_reads/{sample}/{region}/{platform}/reads.fastq.gz"
+    output:
+         paf="data/regional_reads/{sample}/{region}/{platform}/alignment.paf.gz"
+    conda:
+        "envs/minimap2.yaml"
+    threads: 8
+    shell:
+        """
+        minimap2 -x map-ont -t {threads} {input.reference} {input.fastq} | gzip -c > {output.paf}
+        """
+
+         
+
+rule get_real_metadata:
+    input:
+        fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
+        paf="data/regional_reads/{sample}/{region}/{platform}/alignment.paf.gz",
+    output:
+        tsv="data/regional_reads/{sample}/{region}/{platform}/read_info.tsv.gz",
+    conda:
+        "envs/default.yaml"
+    script:
+        "scripts/get_real_read_info.smk.py"
 
 rule kmer_encoding:
     input:
         fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
         tsv="data/regional_reads/{sample}/{region}/{platform}/read_info.tsv.gz",
+        paf="data/regional_reads/{sample}/{region}/{platform}/alignment.paf.gz",
     output:
         npz="data/feature_matrix/{sample}/{region}/{platform}/kmer_k{k}/feature_matrix.npz",
         json="data/feature_matrix/{sample}/{region}/{platform}/kmer_k{k}/read_features.json.gz",
@@ -143,7 +170,7 @@ rule run_minimap2_ava:
     input:
         fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
     output:
-        paf="data/minimap2/{sample}/{region}/{platform}/alignment.paf.gz",
+        paf_minimap2="data/minimap2/{sample}/{region}/{platform}/alignment.paf.gz",
     params:
         preset="ava-ont",
     conda:
@@ -151,9 +178,21 @@ rule run_minimap2_ava:
     threads: 8
     shell:
         """
-        minimap2 -x {params.preset} -t {threads} {input.fasta} {input.fasta} | gzip -c > {output.paf}
+        minimap2 -x {params.preset} -t {threads} {input.fasta} {input.fasta} | gzip -c > {output.paf_minimap2}
         """
 
+rule blend:
+    input:
+        fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
+    output:
+        paf_blend="data/blend/{sample}/{region}/{platform}/alignment.paf.gz"
+    conda:
+        "envs/blend.yaml"
+    threads: 8
+    shell:
+        """
+        blend -x ava-ont {input.fasta} {input.fasta} | gzip -c > {output.paf_blend}
+        """
 
 rule run_daligner:
     input:
@@ -188,7 +227,8 @@ rule get_neighbors:
         feature_matrix="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/feature_matrix.npz",
         read_features="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/read_features.json.gz",
         metadata="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/metadata.tsv.gz",
-        paf="data/minimap2/{sample}/{region}/{platform}/alignment.paf.gz",
+        paf_minimap2="data/minimap2/{sample}/{region}/{platform}/alignment.paf.gz",
+        paf_blend="data/blend/{sample}/{region}/{platform}/alignment.paf.gz"
     output:
         nbr_indice="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_nbr_matrix.npz",
         overlap="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_overlap_stat.tsv"
@@ -236,8 +276,8 @@ rule test2:
 rule test3:
     input:
         "data/regional_reads/CHM13/TRA/pbsim_ONT_95_30k/reads.fasta.gz",
-        "data/feature_matrix/kmer/CHM13/TRA/pbsim_ONT_95_30k/read_features.json.gz",
-        "data/feature_matrix/kmer/CHM13/TRA/pbsim_ONT_95_30k/metadata.tsv.gz",
+        "data/feature_matrix/CHM13/TRA/pbsim_ONT_95_30k/kmer_k16/read_features.json.gz",
+        "data/feature_matrix/CHM13/TRA/pbsim_ONT_95_30k/kmer_k16/metadata.tsv.gz",
 
 
 rule test4:
@@ -247,8 +287,8 @@ rule test4:
 
 rule test5:
     input:
-        "data/minimap2/CHM13/HLA/pbsim_ONT_93_30k/alignment.gaf.gz",
-        "data/feature_matrix/kmer/CHM13/HLA/pbsim_ONT_93_30k/read_features.json.gz",
+        "data/minimap2/CHM13/HLA/pbsim_ONT_93_30k/alignment.paf.gz",
+        "data/blend/CHM13/HLA/pbsim_ONT_93_30k/alignment.paf.gz",
 
 
 rule test6:
@@ -263,14 +303,8 @@ rule test7:
 
 rule mytest1:
     input:
-        expand("data/evaluation/CHM13/IGK/pbsim_ONT_93_30k/kmer_k16/{method}_nbr_matrix.npz",
-        method=['PQ_Euclidean_scBiMap_500d_TF',
- 'PQ_Euclidean_scBiMap_500d_IDF',
- 'PQ_Euclidean_scBiMap_500d_TF-IDF',
- 'PQ_Euclidean_scBiMap_500d_None',
- 'PQ_Cosine_scBiMap_500d_TF',
- 'PQ_Cosine_scBiMap_500d_IDF',
- 'PQ_Cosine_scBiMap_500d_TF-IDF',
+        expand("data/evaluation/Ecoli/all/ONT/kmer_k16/{method}_nbr_matrix.npz",
+        method=['PQ_Euclidean_scBiMap_500d_TF','PQ_Euclidean_scBiMap_500d_IDF','PQ_Euclidean_scBiMap_500d_TF-IDF','PQ_Euclidean_scBiMap_500d_None','PQ_Cosine_scBiMap_500d_TF','PQ_Cosine_scBiMap_500d_IDF','PQ_Cosine_scBiMap_500d_TF-IDF',
  'PQ_Cosine_scBiMap_500d_None',
  'HNSW_Euclidean_scBiMap_500d_TF',
  'HNSW_Euclidean_scBiMap_500d_IDF',
@@ -289,3 +323,30 @@ rule mytest3:
      input:
          expand("data/evaluation/CHM13/IGK/pbsim_ONT_93_30k/kmer_k16/{method}_nbr_matrix.npz",
          method=['Exact_Euclidean_None_TF', 'Exact_Euclidean_None_IDF', 'Exact_Euclidean_None_TF-IDF','Exact_Euclidean_None_None', 'Exact_Cosine_None_TF', 'Exact_Cosine_None_IDF', 'Exact_Cosine_None_TF-IDF', 'Exact_Cosine_None_None'])
+rule mytest4:
+    input:
+        expand("data/evaluation/CHM13/IGK/pbsim_ONT_93_30k/kmer_k16/{method}_nbr_matrix.npz",
+         method=['Blend'] )
+
+rule mytest5:
+    input:
+        expand("data/evaluation/CHM13/HLA/pbsim_ONT_93_30k/kmer_k16/{method}_nbr_matrix.npz",
+         method=['Exact_Euclidean_None_TF-IDF',
+         'Exact_Euclidean_Spectural_500d_TF-IDF',
+ 'Exact_Euclidean_scBiMap_500d_TF-IDF',
+ 'Exact_Cosine_Spectural_500d_TF-IDF',
+ 'Exact_Cosine_scBiMap_500d_TF-IDF',
+ 'PQ_Euclidean_Spectural_500d_TF-IDF',
+ 'PQ_Euclidean_scBiMap_500d_TF-IDF',
+ 'PQ_Cosine_Spectural_500d_TF-IDF',
+ 'PQ_Cosine_scBiMap_500d_TF-IDF',
+ 'HNSW_Euclidean_Spectural_500d_TF-IDF',
+ 'HNSW_Euclidean_scBiMap_500d_TF-IDF',
+ 'HNSW_Cosine_Spectural_500d_TF-IDF',
+ 'HNSW_Cosine_scBiMap_500d_TF-IDF',
+ 'LowHash_Jaccard_None_TF-IDF',
+ 'WeightedLowHash_Jaccard_None_TF-IDF',
+ 'MinHash_Jaccard_None_TF-IDF',
+ 'WeightedMinHash_Jaccard_None_TF-IDF',
+ 'NNDescent_Euclidean_Spectural_500d_TF-IDF',
+ 'NNDescent_Euclidean_scBiMap_500d_TF-IDF','Minimap2','Blend'])
