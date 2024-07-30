@@ -22,3 +22,4 @@ dependencies:
   - sharedmem 
   - mmh3
   - faiss-cpu
+  - memory_profiler == 0.61.0

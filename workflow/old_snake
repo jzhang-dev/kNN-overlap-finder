@@ -118,12 +118,12 @@ rule get_pbsim_metadata:
     script:
         "scripts/get_pbsim_read_info.smk.py"
 
-rule alignment_of_real_data_and_reference:
+rule alignment_for_metadata:
     input:
          reference="data/regional_reads/{sample}/{region}/{platform}/genome.fasta",
-         fastq="data/regional_reads/{sample}/{region}/{platform}/reads.fastq.gz"
+         fastq="data/regional_reads/{sample}/{region}/{platform}/reads.fastq.gz",
     output:
-         paf="data/regional_reads/{sample}/{region}/{platform}/alignment.paf.gz"
+         paf="data/regional_reads/{sample}/{region}/{platform}/alignment.paf.gz",
     conda:
         "envs/minimap2.yaml"
     threads: 8
@@ -132,15 +132,12 @@ rule alignment_of_real_data_and_reference:
         minimap2 -x map-ont -t {threads} {input.reference} {input.fastq} | gzip -c > {output.paf}
         """
 
-         
-
 rule get_real_metadata:
     input:
         fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
         paf="data/regional_reads/{sample}/{region}/{platform}/alignment.paf.gz",
     output:
         tsv="data/regional_reads/{sample}/{region}/{platform}/read_info.tsv.gz",
-        stat="data/regional_reads/{sample}/{region}/{platform}/read_usage_statistic.tsv.gz"
     conda:
         "envs/default.yaml"
     script:
@@ -232,16 +229,16 @@ rule get_neighbors:
         paf_blend="data/blend/{sample}/{region}/{platform}/alignment.paf.gz"
     output:
         nbr_indice="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_nbr_matrix.npz",
-        overlap="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_overlap_stat.tsv"
-    benchmark:
-        "data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}.benchmark.csv"
-    log:
+        overlap="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_overlap_stat.tsv",
         notebook="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_get_neighbors.py.ipynb",
+        memory="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_memory_usage.dat"
+        plot="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_memory_usage.png"
     threads: 1
     conda:
         "envs/evaluate.yaml"
-    notebook:
-        "notebooks/get_neighbors_indice.smk.py.ipynb"
+    shell:
+        "mprof run -output {output.memory} jupyter nbconvert --execute notebooks/get_neighbors_indice.smk.py.ipynb --to notebook --output {ouput.notebook}
+        && mprof plot --output {output.plot}"
 
 
 
@@ -346,6 +343,3 @@ rule mytest5:
  'MinHash_Jaccard_None_TF-IDF',
  'WeightedMinHash_Jaccard_None_TF-IDF',
  'NNDescent_Euclidean_scBiMap_500d_TF-IDF','Minimap2','Blend'])
-     benchmark:
-        "data/evaluation/Ecoli/all/ONT/kmer_k16/{method}.benchmark.csv"
-

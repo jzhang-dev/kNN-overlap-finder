@@ -8,7 +8,6 @@ import numpy as np
 from numpy import ndarray
 import sharedmem
 
-
 from nearest_neighbors import _NearestNeighbors, ExactNearestNeighbors
 from dim_reduction import _DimensionReduction, SpectralEmbedding, scBiMapEmbedding
 from graph import OverlapGraph, get_overlap_statistics
@@ -67,7 +66,6 @@ class NearestNeighborsConfig:
         if verbose:
             print(f"Finished {self}. Elapsed time: {elapsed_time}. Peak memory: {peak_memory}")
         return neighbor_indices, elapsed_time, peak_memory
-
 
 
 
