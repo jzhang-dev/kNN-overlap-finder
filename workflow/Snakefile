@@ -134,7 +134,7 @@ rule alignment_of_real_data_and_reference:
 
          
 
-rule get_real_metadata:
+rule paf_to_metadata:
     input:
         fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
         paf="data/regional_reads/{sample}/{region}/{platform}/alignment.paf.gz",
@@ -232,9 +232,9 @@ rule get_neighbors:
         paf_blend="data/blend/{sample}/{region}/{platform}/alignment.paf.gz"
     output:
         nbr_indice="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_nbr_matrix.npz",
-        overlap="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_overlap_stat.tsv"
+        time_use="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_time_usage.json",
     benchmark:
-        "data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}.benchmark.csv"
+        "data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_benchmark.csv"
     log:
         notebook="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_get_neighbors.py.ipynb",
     threads: 1
@@ -250,11 +250,12 @@ rule evaluate_configs:
         feature_matrix="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/feature_matrix.npz",
         read_features="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/read_features.json.gz",
         metadata="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/metadata.tsv.gz",
-        paf="data/minimap2/{sample}/{region}/{platform}/alignment.paf.gz",
+        nbr_indice="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_nbr_matrix.npz",
+        time_use="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_time_usage.json",
     output:
-        folder=directory("data/evaluation/{sample}/{region}/{platform}/{encoding}/"),
+        overlap="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_overlap_stat.tsv",
     log:
-        notebook="data/evaluation/{sample}/{region}/{platform}/{encoding}/evaluate_configs.py.ipynb",
+        notebook="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_evaluate_configs.py.ipynb",
     threads: 8
     conda:
         "envs/evaluate.yaml"
@@ -262,90 +263,60 @@ rule evaluate_configs:
         "notebooks/evaluate_configs.smk.py.ipynb"
 
 
+rule evaluate_and_visualize_configs:
+    input:
+        feature_matrix="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/feature_matrix.npz",
+        read_features="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/read_features.json.gz",
+        metadata="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/metadata.tsv.gz",
+        nbr_indice="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_nbr_matrix.npz",
+        time_use="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_time_usage.json",
+
+    output:
+        overlap="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_withfig_overlap_stat.tsv",
+        fig="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_fig.png",
+    log:
+        notebook="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_evaluate_configs.py.ipynb",
+    threads: 8
+    conda:
+        "envs/evaluate.yaml"
+    notebook:
+        "notebooks/evaluate_configs_visulization.smk.ipynb"
+
+
 # ----------------------------------------------------------------------------------------------------
 
-
-rule test1:
+rule only_statistic:
     input:
-        "data/regional_reads/CHM13/TRA/perfect_10k/reads.fasta.gz",
+        expand("data/evaluation/human/chr22/ONT_R9/kmer_k16/{method}_overlap_stat.tsv",
+        method=[
+        'Exact_Euclidean_None_TF-IDF',
+        'Exact_Euclidean_scBiMap_500d_TF-IDF',
+        'Exact_Cosine_scBiMap_500d_TF-IDF',
+        'PQ_Euclidean_scBiMap_500d_TF-IDF',
+        'PQ_Cosine_scBiMap_500d_TF-IDF',
+        'HNSW_Euclidean_scBiMap_500d_TF-IDF',
+        'HNSW_Cosine_scBiMap_500d_TF-IDF',
+        'LowHash_Jaccard_None_TF-IDF',
+        'WeightedLowHash_Jaccard_None_TF-IDF',
+        'MinHash_Jaccard_None_TF-IDF',
+        'WeightedMinHash_Jaccard_None_TF-IDF',
+        'NNDescent_Euclidean_scBiMap_500d_TF-IDF',
+        'Minimap2',
+        'Blend'
+        ])
 
-
-rule test2:
+rule statistic_and_visulization:
     input:
-        "data/feature_matrix/kmer/CHM13/TRA/perfect_50k/read_features.json.gz",
-        "data/feature_matrix/kmer/CHM13/TRA/perfect_50k/metadata.tsv.gz",
-
-
-rule test3:
-    input:
-        "data/regional_reads/CHM13/TRA/pbsim_ONT_95_30k/reads.fasta.gz",
-        "data/feature_matrix/CHM13/TRA/pbsim_ONT_95_30k/kmer_k16/read_features.json.gz",
-        "data/feature_matrix/CHM13/TRA/pbsim_ONT_95_30k/kmer_k16/metadata.tsv.gz",
-
-
-rule test4:
-    input:
-        "data/feature_matrix/kmer/CHM13/HLA/pbsim_ONT_93_30k/read_features.json.gz",
-
-
-rule test5:
-    input:
-        "data/minimap2/CHM13/HLA/pbsim_ONT_93_30k/alignment.paf.gz",
-        "data/blend/CHM13/HLA/pbsim_ONT_93_30k/alignment.paf.gz",
-
-
-rule test6:
-    input:
-        expand("data/evaluation/CHM13/{region}/pbsim_ONT_93_30k/kmer_k{k}/", 
-        region=("HLA", "TRA", "IGK", "IGH"), k=[16])
- 
-rule test7:
-    input:
-        expand("data/evaluation/CHM13/{region}/pbsim_ONT_93_30k/kmer_k{k}/", 
-        region=["chr6_50M"], k=[16])
-
-rule mytest1:
-    input:
-        expand("data/evaluation/Ecoli/all/ONT/kmer_k16/{method}_nbr_matrix.npz",
-        method=['PQ_Euclidean_scBiMap_500d_TF','PQ_Euclidean_scBiMap_500d_IDF','PQ_Euclidean_scBiMap_500d_TF-IDF','PQ_Euclidean_scBiMap_500d_None','PQ_Cosine_scBiMap_500d_TF','PQ_Cosine_scBiMap_500d_IDF','PQ_Cosine_scBiMap_500d_TF-IDF',
- 'PQ_Cosine_scBiMap_500d_None',
- 'HNSW_Euclidean_scBiMap_500d_TF',
- 'HNSW_Euclidean_scBiMap_500d_IDF',
- 'HNSW_Euclidean_scBiMap_500d_TF-IDF',
- 'HNSW_Euclidean_scBiMap_500d_None',
- 'HNSW_Cosine_scBiMap_500d_TF',
- 'HNSW_Cosine_scBiMap_500d_IDF',
- 'HNSW_Cosine_scBiMap_500d_TF-IDF',
- 'HNSW_Cosine_scBiMap_500d_None'])
-rule mytest2:
-     input:
-        expand("data/evaluation/CHM13/IGK/pbsim_ONT_93_30k/kmer_k16/{method}_nbr_matrix.npz",
-        method=['Exact_Euclidean_scBiMap_500d_TF', 'Exact_Euclidean_scBiMap_500d_IDF', 'Exact_Euclidean_scBiMap_500d_TF-IDF', 'Exact_Euclidean_scBiMap_500d_None', 'Exact_Cosine_scBiMap_500d_TF', 'Exact_Cosine_scBiMap_500d_IDF', 'Exact_Cosine_scBiMap_500d_TF-IDF', 'Exact_Cosine_scBiMap_500d_None', 'LowHash_Jaccard_None_TF', 'LowHash_Jaccard_None_IDF', 'LowHash_Jaccard_None_TF-IDF', 'LowHash_Jaccard_None_None', 'WeightedLowHash_Jaccard_None_TF', 'WeightedLowHash_Jaccard_None_IDF', 'WeightedLowHash_Jaccard_None_TF-IDF', 'WeightedLowHash_Jaccard_None_None', 'MinHash_Jaccard_None_TF', 'MinHash_Jaccard_None_IDF', 'MinHash_Jaccard_None_TF-IDF', 'MinHash_Jaccard_None_None', 'WeightedMinHash_Jaccard_None_TF', 'WeightedMinHash_Jaccard_None_IDF', 'WeightedMinHash_Jaccard_None_TF-IDF', 'WeightedMinHash_Jaccard_None_None'])
-
-rule mytest3:
-     input:
-         expand("data/evaluation/CHM13/IGK/pbsim_ONT_93_30k/kmer_k16/{method}_nbr_matrix.npz",
-         method=['Exact_Euclidean_None_TF', 'Exact_Euclidean_None_IDF', 'Exact_Euclidean_None_TF-IDF','Exact_Euclidean_None_None', 'Exact_Cosine_None_TF', 'Exact_Cosine_None_IDF', 'Exact_Cosine_None_TF-IDF', 'Exact_Cosine_None_None'])
-rule mytest4:
-    input:
-        expand("data/evaluation/CHM13/IGK/pbsim_ONT_93_30k/kmer_k16/{method}_nbr_matrix.npz",
-         method=['Blend'] )
-
-rule mytest5:
-    input:
-        expand("data/evaluation/Ecoli/all/ONT/kmer_k16/{method}_nbr_matrix.npz",
-         method=['Exact_Euclidean_None_TF-IDF',
- 'Exact_Euclidean_scBiMap_500d_TF-IDF',
- 'Exact_Cosine_scBiMap_500d_TF-IDF',
- 'PQ_Euclidean_scBiMap_500d_TF-IDF',
- 'PQ_Cosine_scBiMap_500d_TF-IDF',
- 'HNSW_Euclidean_scBiMap_500d_TF-IDF',
- 'HNSW_Cosine_scBiMap_500d_TF-IDF',
- 'LowHash_Jaccard_None_TF-IDF',
- 'WeightedLowHash_Jaccard_None_TF-IDF',
- 'MinHash_Jaccard_None_TF-IDF',
- 'WeightedMinHash_Jaccard_None_TF-IDF',
- 'NNDescent_Euclidean_scBiMap_500d_TF-IDF','Minimap2','Blend'])
-     benchmark:
-        "data/evaluation/Ecoli/all/ONT/kmer_k16/{method}.benchmark.csv"
+        expand("data/evaluation/Ecoli/all/ONT/kmer_k16/{method}_fig.png",
+        method=[
+        'Exact_Euclidean_None_TF-IDF',
+        'Exact_Euclidean_scBiMap_500d_TF-IDF',
+        'PQ_Euclidean_scBiMap_500d_TF-IDF',
+        'PQ_Cosine_scBiMap_500d_TF-IDF',
+        'HNSW_Euclidean_scBiMap_500d_TF-IDF',
+        'WeightedLowHash_Jaccard_None_TF-IDF',
+        'WeightedMinHash_Jaccard_None_TF-IDF',
+        'NNDescent_Euclidean_scBiMap_500d_TF-IDF',
+        'Blend'
+        ])
 
