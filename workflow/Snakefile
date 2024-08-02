@@ -118,6 +118,18 @@ rule get_pbsim_metadata:
     script:
         "scripts/get_pbsim_read_info.smk.py"
 
+
+rule sampling_fastq:
+    input:
+        ont="/home/miaocj/docker_dir/HG002.ONT_R9.fastq.gz"
+    output:
+        fastq="data/regional_reads/{sample}/{region}/{platform}/reads.fastq.gz"
+    shell:
+        """
+        seqtk sample -s 100 {input.ont} 0.43 | gzip > {output.fastq} &
+        """
+
+
 rule alignment_of_real_data_and_reference:
     input:
          reference="data/regional_reads/{sample}/{region}/{platform}/genome.fasta",
@@ -132,7 +144,15 @@ rule alignment_of_real_data_and_reference:
         minimap2 -x map-ont -t {threads} {input.reference} {input.fastq} | gzip -c > {output.paf}
         """
 
-         
+rule fastq_to_fasta:
+    input:
+        fastq="data/regional_reads/{sample}/{region}/{platform}/reads.fastq.gz",
+    output:
+        fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
+    shell:
+        """
+        seqtk -a {input.fastq} | gzip > {output.fasta}
+        """
 
 rule paf_to_metadata:
     input:
@@ -165,6 +185,26 @@ rule kmer_encoding:
         "envs/default.yaml"
     script:
         "scripts/kmer_encoding.smk.py"
+
+rule kmer_encoding_test:
+    input:
+        fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
+        tsv="data/regional_reads/{sample}/{region}/{platform}/read_info1.tsv.gz",
+        paf="data/regional_reads/{sample}/{region}/{platform}/alignment.paf.gz",
+    output:
+        npz="data/feature_matrix/{sample}/{region}/{platform}/kmer_k{k}/feature_matrix.npz",
+        json="data/feature_matrix/{sample}/{region}/{platform}/kmer_k{k}/read_features.json.gz",
+        tsv="data/feature_matrix/{sample}/{region}/{platform}/kmer_k{k}/metadata1.tsv.gz",
+    params:
+        sample_fraction=0.05,
+        min_multiplicity=2,
+        seed=562104830,
+    wildcard_constraints:
+        k=r"\d+",
+    conda:
+        "envs/default.yaml"
+    script:
+        "scripts/kmer_encoding_for_chrs.smk.py"
 
 
 rule run_minimap2_ava:
@@ -309,14 +349,12 @@ rule statistic_and_visulization:
     input:
         expand("data/evaluation/Ecoli/all/ONT/kmer_k16/{method}_fig.png",
         method=[
-        'Exact_Euclidean_None_TF-IDF',
-        'Exact_Euclidean_scBiMap_500d_TF-IDF',
-        'PQ_Euclidean_scBiMap_500d_TF-IDF',
-        'PQ_Cosine_scBiMap_500d_TF-IDF',
         'HNSW_Euclidean_scBiMap_500d_TF-IDF',
         'WeightedLowHash_Jaccard_None_TF-IDF',
         'WeightedMinHash_Jaccard_None_TF-IDF',
         'NNDescent_Euclidean_scBiMap_500d_TF-IDF',
-        'Blend'
         ])
 
+rule mytest:
+    input:
+        "data/feature_matrix/Ecoli/all/tmp/kmermetadata1.tsv.gz"

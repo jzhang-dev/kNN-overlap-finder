@@ -14,6 +14,7 @@ import pandas as pd
 def get_metadata(fasta_gz_file,paf_gz_file) -> pd.DataFrame:
     read_sequences = []
     read_names = []
+    chromosomes = []
     strands = []
     read_lengths = []
     start_positions = []
@@ -50,11 +51,13 @@ def get_metadata(fasta_gz_file,paf_gz_file) -> pd.DataFrame:
                     read_lengths.append(columns[1])
                     start_positions.append(columns[7])
                     end_positions.append(columns[8])
+                    chromosomes.append(columns[5])
 
     metadata = pd.DataFrame(
         dict(
             read_name=read_names,
             read_length=read_lengths,
+            reference_chromosome=chromosomes,
             reference_strand=strands,
             reference_start=start_positions,
             reference_end=end_positions,
@@ -62,16 +65,16 @@ def get_metadata(fasta_gz_file,paf_gz_file) -> pd.DataFrame:
     )
     reads_stat = pd.DataFrame(
         dict(
-        allseq_num=allseq_num,
-        allseq_length=allseq_length,
-        select_num=select_num,
-        select_length=select_length,
-        aligned_num=aligned_num,
-        aligned_length=aligned_length,
-        percentage_num_of_align=aligned_num/allseq_num,
-        percentage_len_of_align=aligned_length/allseq_length,
-        percentage_num_of_select=select_num/allseq_num,
-        percentage_len_of_select=select_length/allseq_length,
+        allseq_num="{:.0f}".format(allseq_num),
+        allseq_length="{:.0f}".format(allseq_length),
+        select_num="{:.0f}".format(select_num),
+        select_length="{:.0f}".format(select_length),
+        aligned_num="{:.0f}".format(aligned_num),
+        aligned_length="{:.0f}".format(aligned_length),
+        percentage_num_of_align="{:.4f}%".format(aligned_num/allseq_num*100),
+        percentage_len_of_align="{:.4f}%".format(aligned_length/allseq_length*100),
+        percentage_num_of_select="{:.4f}%".format(select_num/allseq_num*100),
+        percentage_len_of_select="{:.4f}%".format(select_length/allseq_length*100),
         ),index=[0]
     ).T
     return metadata,reads_stat
