@@ -10,7 +10,9 @@ from Bio import SeqIO
 import scipy.sparse as sp
 import numpy as np
 import pandas as pd
-
+import sys
+sys.path.append("scripts")
+from accelerate import open_gzipped,parse_fasta
 
 def init_reverse_complement():
     TRANSLATION_TABLE = str.maketrans("ACTGactg", "TGACtgac")
@@ -38,25 +40,24 @@ def load_reads(
     read_names = []
     read_orientations = []
 
-    with gzip.open(paf_path, "rt") as file:
+    with open_gzipped(paf_path, "rt") as file:
         reads_aligned = []
         for row in file:  
             columns = row.strip().split('\t') 
             reads_aligned.append(columns[0])
 
-    with gzip.open(fasta_path, "rt") as handle:  # Open gzipped file in text mode
-        for record in SeqIO.parse(handle, "fasta"):
-            if record.id in reads_aligned:
-                seq = str(record.seq)
-                read_sequences.append(seq)
-                read_names.append(record.id)
-                read_orientations.append("+")
+ # Open gzipped file in text mode
+    for record in parse_fasta(fasta_path):
+        if record[0] in reads_aligned:
+            seq = record[1]
+            read_sequences.append(seq)
+            read_names.append(record[0])
+            read_orientations.append("+")
 
-                # Include reverse complement
-                read_sequences.append(reverse_complement(seq))
-                read_names.append(record.id)
-                read_orientations.append("-")
-
+            # Include reverse complement
+            read_sequences.append(reverse_complement(seq))
+            read_names.append(record[0])
+            read_orientations.append("-")
     return read_names, read_orientations, read_sequences
 
 
@@ -108,13 +109,11 @@ def build_feature_matrix(
             features_i.append(j)
 
         read_features.append(features_i)
-
         kmer_counts = collections.Counter(features_i)
         for j, count in kmer_counts.items():
             row_ind.append(i)
             col_ind.append(j)
             data.append(count)
-
     feature_matrix = sp.csr_matrix(
         (data, (row_ind, col_ind)), shape=(len(read_sequences), len(kmer_indices))
     )
@@ -210,7 +209,7 @@ def main(snakemake: "SnakemakeContext"):
         processes=threads,
     )
     sp.save_npz(output_npz_file, feature_matrix)
-    with gzip.open(output_json_file, "wt") as f:
+    with open_gzipped(output_json_file, "wt") as f:
         json.dump(read_features, f)
     metadata.to_csv(output_tsv_file, index=False, sep="\t")
 

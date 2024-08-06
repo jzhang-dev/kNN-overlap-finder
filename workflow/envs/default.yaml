@@ -12,4 +12,4 @@ dependencies:
   - python-intervaltree
   - requests
   - scipy
-
+  - python-isal

@@ -43,7 +43,7 @@ def get_metadata(fasta_gz_file,paf_gz_file) -> pd.DataFrame:
                 if int(columns[9])/int(columns[1]) > 0.5:
                     select_num += 1
                     select_length += int(columns[1])
-                    fastq_dict = max_values[record.id]
+                    fasta_dict = max_values[record.id]
                     read_sequences.append(record.seq)
                     read_names.append(record.id)
                     strands.append(columns[4])

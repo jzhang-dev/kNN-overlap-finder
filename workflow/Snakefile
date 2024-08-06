@@ -107,7 +107,6 @@ rule get_perfect_read_info:
 
 rule get_pbsim_metadata:
     input:
-        #fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
         maf="data/regional_reads/{sample}/{region}/{platform}/alignment.maf.gz",
     output:
         tsv="data/regional_reads/{sample}/{region}/{platform}/read_info.tsv.gz",
@@ -118,16 +117,6 @@ rule get_pbsim_metadata:
     script:
         "scripts/get_pbsim_read_info.smk.py"
 
-
-rule sampling_fastq:
-    input:
-        ont="/home/miaocj/docker_dir/HG002.ONT_R9.fastq.gz"
-    output:
-        fastq="data/regional_reads/{sample}/{region}/{platform}/reads.fastq.gz"
-    shell:
-        """
-        seqtk sample -s 100 {input.ont} 0.43 | gzip > {output.fastq} &
-        """
 
 
 rule alignment_of_real_data_and_reference:
@@ -142,16 +131,6 @@ rule alignment_of_real_data_and_reference:
     shell:
         """
         minimap2 -x map-ont -t {threads} {input.reference} {input.fastq} | gzip -c > {output.paf}
-        """
-
-rule fastq_to_fasta:
-    input:
-        fastq="data/regional_reads/{sample}/{region}/{platform}/reads.fastq.gz",
-    output:
-        fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
-    shell:
-        """
-        seqtk -a {input.fastq} | gzip > {output.fasta}
         """
 
 rule paf_to_metadata:
@@ -216,24 +195,12 @@ rule run_minimap2_ava:
         preset="ava-ont",
     conda:
         "envs/minimap2.yaml"
-    threads: 8
+    threads: 32
     shell:
         """
         minimap2 -x {params.preset} -t {threads} {input.fasta} {input.fasta} | gzip -c > {output.paf_minimap2}
         """
 
-rule blend:
-    input:
-        fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
-    output:
-        paf_blend="data/blend/{sample}/{region}/{platform}/alignment.paf.gz"
-    conda:
-        "envs/blend.yaml"
-    threads: 8
-    shell:
-        """
-        blend -x ava-ont {input.fasta} {input.fasta} | gzip -c > {output.paf_blend}
-        """
 
 rule run_daligner:
     input:
@@ -268,8 +235,8 @@ rule get_neighbors:
         feature_matrix="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/feature_matrix.npz",
         read_features="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/read_features.json.gz",
         metadata="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/metadata.tsv.gz",
-        paf_minimap2="data/minimap2/{sample}/{region}/{platform}/alignment.paf.gz",
-        paf_blend="data/blend/{sample}/{region}/{platform}/alignment.paf.gz"
+        #paf_minimap2="data/minimap2/{sample}/{region}/{platform}/alignment.paf.gz",
+        #paf_blend="data/blend/{sample}/{region}/{platform}/alignment.paf.gz",
     output:
         nbr_indice="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_nbr_matrix.npz",
         time_use="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_time_usage.json",
@@ -335,14 +302,11 @@ rule only_statistic:
         'PQ_Euclidean_scBiMap_500d_TF-IDF',
         'PQ_Cosine_scBiMap_500d_TF-IDF',
         'HNSW_Euclidean_scBiMap_500d_TF-IDF',
-        'HNSW_Cosine_scBiMap_500d_TF-IDF',
         'LowHash_Jaccard_None_TF-IDF',
         'WeightedLowHash_Jaccard_None_TF-IDF',
         'MinHash_Jaccard_None_TF-IDF',
         'WeightedMinHash_Jaccard_None_TF-IDF',
-        'NNDescent_Euclidean_scBiMap_500d_TF-IDF',
-        'Minimap2',
-        'Blend'
+        'NNDescent_Euclidean_scBiMap_500d_TF-IDF'
         ])
 
 rule statistic_and_visulization:
