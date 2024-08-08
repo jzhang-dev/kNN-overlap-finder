@@ -7,7 +7,7 @@ dependencies:
   - anndata == 0.10.7 
   - biopython 
   - hnswlib == 0.7.0
-  - matplotlib 
+  - matplotlib
   - nbconvert
   - notebook
   - numpy 

@@ -321,4 +321,7 @@ rule statistic_and_visulization:
 
 rule mytest:
     input:
-        "data/feature_matrix/Ecoli/all/tmp/kmermetadata1.tsv.gz"
+        expand("data/evaluation/CHM13/IGK/pbsim_ONT_93_30k/kmer_k16/{method}_overlap_stat.tsv",
+        method=[
+        'Exact_Euclidean_None_None',
+        ])
