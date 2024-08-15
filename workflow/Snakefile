@@ -117,6 +117,25 @@ rule get_pbsim_metadata:
     script:
         "scripts/get_pbsim_read_info.smk.py"
 
+rule kmer_encoding:
+    input:
+        fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
+        tsv="data/regional_reads/{sample}/{region}/{platform}/read_info.tsv.gz",
+    output:
+        npz="data/feature_matrix/{sample}/{region}/{platform}/kmer_k{k}/feature_matrix.npz",
+        json="data/feature_matrix/{sample}/{region}/{platform}/kmer_k{k}/read_features.json.gz",
+        tsv="data/feature_matrix/{sample}/{region}/{platform}/kmer_k{k}/metadata.tsv.gz",
+    params:
+        sample_fraction=0.05,
+        min_multiplicity=2,
+        seed=562104830,
+    wildcard_constraints:
+        k=r"\d+",
+        platform=r"pbsim_.+",
+    conda:
+        "envs/default.yaml"
+    script:
+        "scripts/kmer_encoding_for_sim.smk.py"
 
 
 rule alignment_of_real_data_and_reference:
@@ -133,6 +152,7 @@ rule alignment_of_real_data_and_reference:
         minimap2 -x map-ont -t {threads} {input.reference} {input.fastq} | gzip -c > {output.paf}
         """
 
+##only for real data
 rule paf_to_metadata:
     input:
         fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
@@ -145,7 +165,7 @@ rule paf_to_metadata:
     script:
         "scripts/get_real_read_info.smk.py"
 
-rule kmer_encoding:
+rule kmer_encoding_from_paf:
     input:
         fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
         tsv="data/regional_reads/{sample}/{region}/{platform}/read_info.tsv.gz",
@@ -235,7 +255,7 @@ rule get_neighbors:
         feature_matrix="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/feature_matrix.npz",
         read_features="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/read_features.json.gz",
         metadata="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/metadata.tsv.gz",
-        #paf_minimap2="data/minimap2/{sample}/{region}/{platform}/alignment.paf.gz",
+        paf_minimap2="data/minimap2/{sample}/{region}/{platform}/alignment.paf.gz",
         #paf_blend="data/blend/{sample}/{region}/{platform}/alignment.paf.gz",
     output:
         nbr_indice="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_nbr_matrix.npz",
@@ -296,17 +316,15 @@ rule only_statistic:
     input:
         expand("data/evaluation/human/chr22/ONT_R9/kmer_k16/{method}_overlap_stat.tsv",
         method=[
-        'Exact_Euclidean_None_TF-IDF',
-        'Exact_Euclidean_scBiMap_500d_TF-IDF',
-        'Exact_Cosine_scBiMap_500d_TF-IDF',
-        'PQ_Euclidean_scBiMap_500d_TF-IDF',
-        'PQ_Cosine_scBiMap_500d_TF-IDF',
-        'HNSW_Euclidean_scBiMap_500d_TF-IDF',
-        'LowHash_Jaccard_None_TF-IDF',
-        'WeightedLowHash_Jaccard_None_TF-IDF',
-        'MinHash_Jaccard_None_TF-IDF',
-        'WeightedMinHash_Jaccard_None_TF-IDF',
-        'NNDescent_Euclidean_scBiMap_500d_TF-IDF'
+            'Exact_Euclidean_None_None',
+            'Exact_Euclidean_scBiMap_500d_None',
+            'Exact_Cosine_None_None',
+            'Exact_Cosine_scBiMap_500d_None',
+            'HNSW_Cosine_scBiMap_500d_None',
+            'PQ_Cosine_scBiMap_500d_None',
+            'Minimap2',
+            'MinHash_Jaccard_None_None',
+            'WeightedMinHash_Jaccard_None_None',
         ])
 
 rule statistic_and_visulization:
@@ -321,7 +339,30 @@ rule statistic_and_visulization:
 
 rule mytest:
     input:
-        expand("data/evaluation/CHM13/IGK/pbsim_ONT_93_30k/kmer_k16/{method}_overlap_stat.tsv",
+        expand("data/evaluation/CHM13/{region}/pbsim_ONT_93_30k/kmer_k16/{method}_overlap_stat.tsv",
+        region = ['IGH','TRA'],
         method=[
         'Exact_Euclidean_None_None',
+        'Exact_Euclidean_scBiMap_500d_None',
+        'Exact_Cosine_None_None',
+        'Exact_Cosine_scBiMap_500d_None',
+        'HNSW_Cosine_scBiMap_500d_None',
+        'PQ_Cosine_scBiMap_500d_None',
+        'Minimap2',
+        'MinHash_Jaccard_None_None',
+        'WeightedMinHash_Jaccard_None_None'
+        ])
+rule mytest2:
+    input:
+        expand("data/evaluation/Ecoli/all/ONT/kmer_k16/{method}_overlap_stat.tsv",
+        method=[
+        'Exact_Euclidean_None_None',
+        'Exact_Euclidean_scBiMap_500d_None',
+        'Exact_Cosine_None_None',
+        'Exact_Cosine_scBiMap_500d_None',
+        'HNSW_Cosine_scBiMap_500d_None',
+        'PQ_Cosine_scBiMap_500d_None',
+        'Minimap2',
+        'MinHash_Jaccard_None_None',
+        'WeightedMinHash_Jaccard_None_None'
         ])
