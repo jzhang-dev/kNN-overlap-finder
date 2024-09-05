@@ -108,3 +108,15 @@ def mp_compute_nearest_neighbors(
     return nbr_dict, time_dict, memory_dict
 
 
+def compute_nearest_neighbors(
+    data: csr_matrix,
+    config: NearestNeighborsConfig,
+    read_features: Mapping[int,list],
+    n_neighbors: int,
+    *,
+    verbose=True,
+) -> tuple[ndarray,ndarray,ndarray]:
+    
+    neighbor_indices, elapsed_time, peak_memory = config.get_neighbors(data=data, n_neighbors=n_neighbors, verbose=verbose)
+
+    return neighbor_indices, elapsed_time, peak_memory

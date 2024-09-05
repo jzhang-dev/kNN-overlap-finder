@@ -28,9 +28,10 @@ def get_metadata(fasta_gz_file,paf_gz_file) -> pd.DataFrame:
             max_values[query_id] = columns 
             if query_id in max_values:
                 if match_bases > int(max_values[query_id][9]):  
-                    max_values[match_bases] = columns
+                    max_values[query_id] = columns
             else:  
                 continue
+    pass_reads = []
     with gzip.open(fasta_gz_file, "rt") as handle:
         select_num,allseq_num,aligned_num,select_length,allseq_length,aligned_length = [0,0,0,0,0,0]
         for record in SeqIO.parse(handle, "fasta"):
@@ -41,9 +42,9 @@ def get_metadata(fasta_gz_file,paf_gz_file) -> pd.DataFrame:
                 columns = max_values[record.id]
                 aligned_length += int(columns[1])
                 if int(columns[9])/int(columns[1]) > 0.5:
+                    pass_reads.append(">%s\n%s\n"%(record.id,record.seq))
                     select_num += 1
                     select_length += int(columns[1])
-                    fasta_dict = max_values[record.id]
                     read_sequences.append(record.seq)
                     read_names.append(record.id)
                     strands.append(columns[4])
@@ -74,17 +75,21 @@ def get_metadata(fasta_gz_file,paf_gz_file) -> pd.DataFrame:
         percentage_len_of_select=select_length/allseq_length,
         ),index=[0]
     ).T
-    return metadata,reads_stat
+    return metadata,reads_stat,pass_reads
 
 
 def main(snakemake: "SnakemakeContext"):
-    fasta_file = snakemake.input["fasta"]
+    fasta_file = snakemake.input["fasta_aligned"]
     paf_file = snakemake.input["paf"]
+    fasta = snakemake.output["fasta"]
     output_tsv_file = snakemake.output["tsv"]
     output_stat_file = snakemake.output["stat"]
-    metadata,read_stat = get_metadata(fasta_file,paf_file)
+    metadata,read_stat,pass_reads = get_metadata(fasta_file,paf_file)
     metadata.to_csv(output_tsv_file, sep="\t", index=False)
     read_stat.to_csv(output_stat_file,sep="\t")
+    joined_string = ''.join(pass_reads)  
+    with gzip.open(fasta, 'wt') as file:  
+        file.write(joined_string)  
 
 if __name__ == "__main__":
     main(snakemake)
