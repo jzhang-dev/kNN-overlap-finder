@@ -182,6 +182,8 @@ rule run_minimap2_ava:
         paf_minimap2="data/minimap2/{sample}/{region}/{platform}/alignment.paf.gz",
     params:
         preset="ava-ont",
+    benchmark:
+        "data/evaluation/minimap2/{sample}/{region}/{platform}/minimap2_benchmark.csv"
     conda:
         "envs/minimap2.yaml"
     threads: 120
@@ -399,4 +401,11 @@ rule mytest4:
 rule mytest5:
     input:
         expand("data/evaluation/human/chr22/ONT_R9/kmer_k16/{method}_overlap_stat.tsv",
-        method=['SimHash_TF'])
+        method=['HNSW_Cosine_Spectural_500d_TF','SimHash_Cosine_None_TF'])
+rule mytest7:
+    input:
+        expand("data/evaluation/human/chr22/ONT_R9/kmer_k16/{method}_overlap_stat.tsv",
+        method=['SimHash_Cosine_None_TF'])
+rule mytest6:
+    input:
+        "data/minimap2/human/HLA/ONT_R9/alignment.paf.gz"

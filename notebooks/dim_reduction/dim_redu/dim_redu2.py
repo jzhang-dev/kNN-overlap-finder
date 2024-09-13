@@ -49,7 +49,7 @@ MAX_SAMPLE_SIZE = int(1e9)
 COVERAGE_DEPTH = 20
 max_n_neighbors = 20
 npz_path = "/home/miaocj/docker_dir/kNN-overlap-finder/data/feature_matrix/human/chr22/ONT_R9/kmer_k16/feature_matrix.npz"
-tsv_path = "/home/miaocj/docker_dir/kNN-overlap-finder/data/feature_matrix/human/chr22/ONT_R9//kmer_k16/metadata.tsv.gz"
+tsv_path = "/home/miaocj/docker_dir/kNN-overlap-finder/data/feature_matrix/human/chr22/ONT_R9/kmer_k16/metadata.tsv.gz"
 json_path = "/home/miaocj/docker_dir/kNN-overlap-finder/data/feature_matrix/human/chr22/ONT_R9/kmer_k16/read_features.json.gz"
 
 meta_df = pd.read_table(tsv_path).iloc[:MAX_SAMPLE_SIZE, :].reset_index()
@@ -60,36 +60,11 @@ with gzip.open(json_path, "rt") as f:
     read_features = json.load(f)
     read_features = {i: read_features[i] for i in meta_df.index}
 
-def get_read_intervals(meta_df):
-    read_intervals = {
-        i: [GenomicInterval(strand, start, end)]
-        for i, strand, start, end in zip(
-            meta_df.index,
-            meta_df["reference_strand"],
-            meta_df["reference_start"],
-            meta_df["reference_end"],
-        )
-    }
-    return read_intervals
-
-read_intervals = get_read_intervals(meta_df)
-
-#reference_graph = OverlapGraph.from_intervals(read_intervals)
-#nr_edges = set((node_1, node_2) for node_1, node_2, data in reference_graph.edges(data=True) if not data['redundant'])
-#connected_component_count = len(list(nx.connected_components(reference_graph)))
-#len(reference_graph.nodes), len(reference_graph.edges), len(nr_edges), connected_component_count
-print("complete reference_graph")
-
-
-tart_time = time.time()
+start_time = time.time()
 mydim = scBiMapEmbedding()
-dim_redu = mydim.transform(feature_matrix,n_dimensions=500)
+dim_redu = mydim.transform(feature_matrix,n_dimensions=30)
 elapsed_time = time.time() - start_time
 print("scBiMapEmbedding dimension reduction done")
 print("elapsed time :%f"%(elapsed_time))
 
-nbrs.fit(dim_redu)
-_, nbr_indices = nbrs.kneighbors(dim_redu)
-df = from_nbr_to_evaluation(nbr_indices,read_ids,reference_graph,des='scBimap')
-df.to_csv('/home/miaocj/docker_dir/kNN-overlap-finder/data/evaluation/human/chr22/ONT_R9/kmer_k16/scBiMapEmbedding_dimredu.tsv',sep='\t')
-
+sp.save_npz('/home/miaocj/docker_dir/kNN-overlap-finder/data/feature_matrix/human/chr22/ONT_R9/kmer_k16/scBimap500.npz', dim_redu)

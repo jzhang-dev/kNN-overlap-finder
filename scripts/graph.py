@@ -257,7 +257,6 @@ def get_overlap_statistics(query_graph: nx.Graph, reference_graph: nx.Graph):
     component_sizes = np.array(component_sizes)
     node_count = len(query_graph.nodes)
     N50 = component_sizes[component_sizes.cumsum() >= node_count * 0.5].max()
-    N50_percentage = '{:.2%}'.format(N50/node_count)
 
     result = dict(
         precision=precision,
@@ -267,6 +266,6 @@ def get_overlap_statistics(query_graph: nx.Graph, reference_graph: nx.Graph):
         singleton_count=singleton_count,
         singleton_fraction=singleton_fraction,
         N50=N50,
-        N50_percentage = N50_percentage,
+        component_sizes=component_sizes
     )
     return result

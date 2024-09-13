@@ -16,6 +16,9 @@ import faiss
 from numba import njit, prange
 from itertools import chain 
 from collections import Counter
+import secrets
+import random
+import pynear
 
 from data_io import parse_paf_file, get_sibling_id
 def hamming_distance(x, y):  
@@ -662,82 +665,34 @@ class IVFProductQuantization(_NearestNeighbors):
         _, nbr_indices = index.search(data, n_neighbors)  # type: ignore
         return nbr_indices
 
-
-
-    
 class SimHash(_NearestNeighbors):
-    def _hash(self,kmer_index: int, seed: int) -> np.ndarray:  
-        hash_value = mmh3.hash(str(kmer_index), seed=seed)
-        binary_string = "{0:032b}".format(hash_value & 0xFFFFFFFF)  
-        hash_array = np.array([int(x) for x in binary_string], dtype=np.int8) 
-        hash_array = np.where(hash_array == 0, -1, 1) 
+    def _hash(self,kmer_index: int) -> np.ndarray:  
+        hash_value = mmh3.hash(str(kmer_index))
+        random.seed(hash_value)
+        random_number = secrets.token_bytes(400)
+        random_integer = int.from_bytes(random_number, byteorder='big')  
+        binary_array = format(random_integer, '03200b')
+        hash_array = list(binary_array)
         return hash_array
     def _get_table(
         self,
-        kmer_num: list,  
-        *,
-        seed: int,
-        repeat=100) -> Mapping[int,list]:  
-        
-        rng = np.random.default_rng(seed)  
-        hash_seeds = rng.integers(low=0, high=2**32 - 1, size=repeat, dtype=np.uint64)  
-        hash_table = np.empty((kmer_num,repeat,32),dtype=np.int8)  
-        for flag,seed in enumerate(hash_seeds):
-            for kmer_index in range(kmer_num):
-                hash_table[kmer_index,flag,:]=self._hash(kmer_index, seed=seed)
-                new_hash_table=np.reshape(hash_table,(kmer_num,3200))
-        return new_hash_table
-
-    def _get_simhash(
-        self,
-        read_features: list,  
-        kmer_num: int,
-        hash_table,
-        *,
-        tf:bool,
-        idf:bool) -> Mapping[int,list]:  
-        all_read_simhash = []
-        if idf == True:
-            nested_list = list(read_features.values())
-            unrongh_nest = [list(set(sublist)) for sublist in nested_list]  
-            merged_list = list(chain.from_iterable(unrongh_nest)) 
-            count = Counter(merged_list)
-            sorted_counts = dict(sorted(count.items(), key=lambda x: x[0]))  
-            times = np.array(list(sorted_counts.values()))
-            x = len(read_features)
-            arr = np.full(kmer_num,x)  
-            idf = np.log(arr/times)
-            weighted_hash_table = hash_table*idf[:, np.newaxis]
-        else:
-            weighted_hash_table = hash_table
-        if tf == False:
-            read_features = {k:list(set(v)) for k,v in read_features.items()}
-
-        for read_kmer in read_features.values():
-            one_read_hash = np.sum(weighted_hash_table[read_kmer,:],axis=0)
-            simhash = np.where(one_read_hash > 0, 1, 0)
-            all_read_simhash.append(simhash)
-        reads_simhash_array = np.array(all_read_simhash)
-
-        return reads_simhash_array 
-
-
+        kmer_num: list) -> Mapping[int,list]:  
+        hash_table = np.empty((kmer_num,3200),dtype=np.int8) 
+        for kmer_index in range(kmer_num):
+            hash_array = self._hash(kmer_index) 
+            hash_table[kmer_index,:]=hash_array
+        hash_table = np.where(hash_table == 0, -1, 1) 
+        return hash_table
     def get_neighbors(
         self,
         data: csr_matrix | np.ndarray,
-        read_features: Mapping[int,list],
         n_neighbors: int,
-        *,
-        tf:bool,
-        idf:bool,
-        repeat=100,
-        seed=455390,
     ) -> np.ndarray:
         kmer_num = data.shape[1]
-        hash_table = self._get_table(kmer_num,seed=seed,repeat=repeat)
-        reads_simhash_array = self._get_simhash(read_features,kmer_num,hash_table,tf = tf,idf=idf)
-        nbrs = sklearn.neighbors.NearestNeighbors(n_neighbors=n_neighbors+1, algorithm='auto', metric=hamming_distance)
-        nbrs.fit(reads_simhash_array)
-        indices = nbrs.kneighbors(reads_simhash_array,return_distance=False)
-        nbr_indices = indices[:, 1:]
+        hash_table = self._get_table(kmer_num)
+        simhash = data@hash_table
+        vptree = pynear.VPTreeBinaryIndex()
+        vptree.set(simhash.astype(np.uint8))
+        vptree_indices, vptree_distances = vptree.searchKNN(simhash.astype(np.uint8), n_neighbors+1)
+        nbr_indices= np.array(vptree_indices)[:,:-1][:,::-1]
         return nbr_indices
