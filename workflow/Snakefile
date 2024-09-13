@@ -1,5 +1,5 @@
 REFERENCE_FASTA_PATH = dict(
-    CHM13="/home/ecs-user/workspace/shared_data/reference_genome/CHM13/chm13v2.0.fa.gz",
+    CHM13="/home/miaocj/docker_dir/data/reference_genome/CHM13/chm13v2.0.fa.gz",
 )
 REGIONS = dict(
     TRA=("chr14", 14819498, 17749884),
@@ -107,7 +107,6 @@ rule get_perfect_read_info:
 
 rule get_pbsim_metadata:
     input:
-        #fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
         maf="data/regional_reads/{sample}/{region}/{platform}/alignment.maf.gz",
     output:
         tsv="data/regional_reads/{sample}/{region}/{platform}/read_info.tsv.gz",
@@ -117,7 +116,6 @@ rule get_pbsim_metadata:
         "envs/default.yaml"
     script:
         "scripts/get_pbsim_read_info.smk.py"
-
 
 rule kmer_encoding:
     input:
@@ -133,34 +131,72 @@ rule kmer_encoding:
         seed=562104830,
     wildcard_constraints:
         k=r"\d+",
+        platform=r"pbsim_.+",
+    conda:
+        "envs/default.yaml"
+    script:
+        "scripts/kmer_encoding_for_sim.smk.py"
+
+#-----------------------------------up for simulate data------------------------------------------------
+
+rule paf_to_read_info:
+    input:
+        fasta_aligned="data/regional_reads/{sample}/{region}/{platform}/aligned_read.fa.gz",
+        paf="data/regional_reads/{sample}/{region}/{platform}/alignment.paf.gz",
+    output:
+        tsv="data/regional_reads/{sample}/{region}/{platform}/read_info.tsv.gz",
+        stat="data/regional_reads/{sample}/{region}/{platform}/read_usage_statistic.tsv.gz",
+        fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
+    conda:
+        "envs/default.yaml"
+    script:
+        "scripts/get_real_read_info.smk.py"
+
+rule kmer_encoding_from_paf:
+    input:
+        fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
+        tsv="data/regional_reads/{sample}/{region}/{platform}/read_info.tsv.gz",
+        paf="data/regional_reads/{sample}/{region}/{platform}/alignment.paf.gz",
+    output:
+        npz="data/feature_matrix/{sample}/{region}/{platform}/kmer_k{k}/feature_matrix.npz",
+        json="data/feature_matrix/{sample}/{region}/{platform}/kmer_k{k}/read_features.json.gz",
+        tsv="data/feature_matrix/{sample}/{region}/{platform}/kmer_k{k}/metadata.tsv.gz",
+    params:
+        sample_fraction=0.05,
+        min_multiplicity=2,
+        seed=562104830,
+    wildcard_constraints:
+        k=r"\d+",
     conda:
         "envs/default.yaml"
     script:
         "scripts/kmer_encoding.smk.py"
 
+#--------------------up for real data-------------------------------------------------------------
 
+##
 rule run_minimap2_ava:
     input:
         fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
     output:
-        paf="data/minimap2/{sample}/{region}/{platform}/alignment.paf.gz",
+        paf_minimap2="data/minimap2/{sample}/{region}/{platform}/alignment.paf.gz",
     params:
         preset="ava-ont",
+    benchmark:
+        "data/evaluation/minimap2/{sample}/{region}/{platform}/minimap2_benchmark.csv"
     conda:
         "envs/minimap2.yaml"
-    threads: 8
+    threads: 120
     shell:
         """
-        minimap2 -x {params.preset} -t {threads} {input.fasta} {input.fasta} | gzip -c > {output.paf}
+        minimap2 -x {params.preset} -t {threads} {input.fasta} {input.fasta}| gzip -c > {output.paf_minimap2}
         """
-
 
 rule run_daligner:
     input:
         fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
     output:
         maf="data/daligner/{sample}/{region}/{platform}/alignment.maf.gz",
-    
     params:
         k = 16,
         average_correlation=".9",
@@ -172,16 +208,34 @@ rule run_daligner:
     shell:
         """
         daligner \
-          -k{params.k} \
-          -e{params.average_correlation} \
-          -l{params.min_alignment_length} \
-          -s{params.min_alignment_score} \
-          -T{threads} \
-          -v \
-          {input.fasta} {input.fasta} \
+            -k{params.k} \
+            -e{params.average_correlation} \
+            -l{params.min_alignment_length} \
+            -s{params.min_alignment_score} \
+            -T{threads} \
+            -v \
+            {input.fasta} {input.fasta} \
         | gzip -c > {output.maf}
         """
-    
+
+rule get_neighbors:
+    input:
+        feature_matrix="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/feature_matrix.npz",
+        read_features="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/read_features.json.gz",
+        metadata="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/metadata.tsv.gz",
+        paf_minimap2="data/minimap2/{sample}/{region}/{platform}/alignment.paf.gz",
+        #paf_blend="data/blend/{sample}/{region}/{platform}/alignment.paf.gz",
+    output:
+        nbr_indice="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_nbr_matrix.npz",
+    benchmark:
+        "data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_benchmark.csv"
+    log:
+        notebook="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_get_neighbors.py.ipynb",
+    threads: 1
+    conda:
+        "envs/evaluate.yaml"
+    notebook:
+        "notebooks/get_neighbors_indice.smk.py.ipynb"
 
 
 rule evaluate_configs:
@@ -189,11 +243,11 @@ rule evaluate_configs:
         feature_matrix="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/feature_matrix.npz",
         read_features="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/read_features.json.gz",
         metadata="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/metadata.tsv.gz",
-        paf="data/minimap2/{sample}/{region}/{platform}/alignment.paf.gz",
+        nbr_indice="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_nbr_matrix.npz",
     output:
-        folder=directory("data/evaluation/{sample}/{region}/{platform}/{encoding}/"),
+        overlap="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_overlap_stat.tsv",
     log:
-        notebook="data/evaluation/{sample}/{region}/{platform}/{encoding}/evaluate_configs.py.ipynb",
+        notebook="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_evaluate_configs.py.ipynb",
     threads: 8
     conda:
         "envs/evaluate.yaml"
@@ -201,50 +255,157 @@ rule evaluate_configs:
         "notebooks/evaluate_configs.smk.py.ipynb"
 
 
+rule evaluate_and_visualize_configs:
+    input:
+        feature_matrix="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/feature_matrix.npz",
+        read_features="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/read_features.json.gz",
+        metadata="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/metadata.tsv.gz",
+        nbr_indice="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_nbr_matrix.npz",
+
+    output:
+        overlap="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_withfig_overlap_stat.tsv",
+        fig="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_fig.png",
+    log:
+        notebook="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_evaluate_configs.py.ipynb",
+    threads: 8
+    conda:
+        "envs/evaluate.yaml"
+    notebook:
+        "notebooks/evaluate_configs_visulization.smk.ipynb"
+
+
 # ----------------------------------------------------------------------------------------------------
 
-
-rule test1:
+rule only_statistic:
     input:
-        "data/regional_reads/CHM13/TRA/perfect_10k/reads.fasta.gz",
-
-
-rule test2:
+        expand("data/evaluation/human/chr22/ONT_R9/kmer_k16/{method}_overlap_stat.tsv",
+        method=[
+            'Exact_Euclidean_None_None',
+            'Exact_Euclidean_scBiMap_500d_None',
+            'Exact_Cosine_None_None',
+            'Exact_Cosine_scBiMap_500d_None',
+            'HNSW_Cosine_scBiMap_500d_None',
+            'PQ_Cosine_scBiMap_500d_None',
+            'Minimap2',
+            'MinHash_Jaccard_None_None',
+            'WeightedMinHash_Jaccard_None_None',
+        ])
+rule only_statistic1:
     input:
-        "data/feature_matrix/kmer/CHM13/TRA/perfect_50k/read_features.json.gz",
-        "data/feature_matrix/kmer/CHM13/TRA/perfect_50k/metadata.tsv.gz",
-
-
-rule test3:
+        expand("data/evaluation/human/chr22/ONT_R9/kmer_k16/{method}_overlap_stat.tsv",
+        method=[
+            'HNSW_Cosine_scBiMap_500d_None',
+            'PQ_Cosine_scBiMap_500d_None',
+        ])
+rule statistic_and_visulization:
     input:
-        "data/regional_reads/CHM13/TRA/pbsim_ONT_95_30k/reads.fasta.gz",
-        "data/feature_matrix/kmer/CHM13/TRA/pbsim_ONT_95_30k/read_features.json.gz",
-        "data/feature_matrix/kmer/CHM13/TRA/pbsim_ONT_95_30k/metadata.tsv.gz",
+        expand("data/evaluation/Ecoli/all/ONT/kmer_k16/{method}_fig.png",
+        method=[
+        'HNSW_Euclidean_scBiMap_500d_TF-IDF',
+        'WeightedLowHash_Jaccard_None_TF-IDF',
+        'WeightedMinHash_Jaccard_None_TF-IDF',
+        'NNDescent_Euclidean_scBiMap_500d_TF-IDF',
+        ])
 
-
-rule test4:
+rule mytest:
     input:
-        "data/feature_matrix/kmer/CHM13/HLA/pbsim_ONT_93_30k/read_features.json.gz",
-
-
-rule test5:
+        expand("data/evaluation/CHM13/{region}/pbsim_ONT_93_30k/kmer_k16/{method}_overlap_stat.tsv",
+        region = ['IGH','TRA'],
+        method=[
+        'Exact_Euclidean_None_None',
+        'Exact_Euclidean_scBiMap_500d_None',
+        'Exact_Cosine_None_None',
+        'Exact_Cosine_scBiMap_500d_None',
+        'HNSW_Cosine_scBiMap_500d_None',
+        'PQ_Cosine_scBiMap_500d_None',
+        'Minimap2',
+        'MinHash_Jaccard_None_None',
+        'WeightedMinHash_Jaccard_None_None'
+        ])
+rule mytest2:
     input:
-        "data/minimap2/CHM13/HLA/pbsim_ONT_93_30k/alignment.gaf.gz",
-        "data/feature_matrix/kmer/CHM13/HLA/pbsim_ONT_93_30k/read_features.json.gz",
+        expand("data/evaluation/Ecoli/all/ONT/kmer_k16/{method}_overlap_stat.tsv",
+        method=[
+        'Exact_Euclidean_None_None',
+        'Exact_Euclidean_scBiMap_500d_None',
+        'Exact_Cosine_None_None', 
+        'Exact_Cosine_scBiMap_500d_None',
+        'HNSW_Cosine_scBiMap_500d_None',
+        'PQ_Cosine_scBiMap_500d_None',
+        'Minimap2',
+        'MinHash_Jaccard_None_None',
+        'WeightedMinHash_Jaccard_None_None'
+        ])
 
-
-rule test6:
+rule only_statistic2:
     input:
-        expand("data/evaluation/CHM13/{region}/pbsim_ONT_93_30k/kmer_k{k}/", 
-        region=("HLA", "TRA", "IGK", "IGH"), k=[16])
- 
-rule test7:
-    input:
-        expand("data/evaluation/CHM13/{region}/pbsim_ONT_93_30k/kmer_k{k}/", 
-        region=["chr6_50M"], k=[16])
+        expand("data/evaluation/human/IGH/ONT_R9/kmer_k16/{method}_overlap_stat.tsv",
+        method=[
+            'Exact_Euclidean_scBiMap_500d_None',
+            'Exact_Euclidean_None_None',
+            'Exact_Cosine_None_None',
+            'Exact_Cosine_scBiMap_500d_None',
+            'HNSW_Cosine_scBiMap_500d_None',
+            'PQ_Cosine_scBiMap_500d_None',
+            'Minimap2',
+            'MinHash_Jaccard_None_None',
+            'WeightedMinHash_Jaccard_None_None',
+            'Exact_Euclidean_scBiMap_500d_TF-IDF',
+            'Exact_Euclidean_None_TF-IDF',
+            'Exact_Cosine_None_TF-IDF',
+            'Exact_Cosine_scBiMap_500d_TF-IDF',
+            'HNSW_Cosine_scBiMap_500d_TF-IDF',
+            'PQ_Cosine_scBiMap_500d_TF-IDF',
+            'Exact_Euclidean_scBiMap_500d_TF',
+            'Exact_Euclidean_None_TF',
+            'Exact_Cosine_None_TF',
+            'Exact_Cosine_scBiMap_500d_TF',
+            'HNSW_Cosine_scBiMap_500d_TF',
+            'PQ_Cosine_scBiMap_500d_TF',
+        ])
 
-
-rule test8:
+rule mytest3:
     input:
-        expand("data/daligner/CHM13/{region}/pbsim_ONT_93_30k/alignment.maf.gz",
-        region=["chr6_50M"], k=[16])
+        expand("data/evaluation/human/HLA/ONT_R9/kmer_k16/{method}_overlap_stat.tsv",
+        method=[
+            'Exact_Euclidean_None_None',
+            'Exact_Euclidean_scBiMap_500d_TF-IDF',
+            'Exact_Euclidean_None_TF-IDF',
+            'Exact_Cosine_None_TF-IDF',
+            'Exact_Cosine_scBiMap_500d_TF-IDF',
+            'HNSW_Cosine_scBiMap_500d_TF-IDF',
+            'PQ_Cosine_scBiMap_500d_TF-IDF',
+            'Exact_Euclidean_scBiMap_500d_TF',
+            'Exact_Euclidean_None_TF',
+            'Exact_Cosine_None_TF',
+            'Exact_Cosine_scBiMap_500d_TF',
+            'HNSW_Cosine_scBiMap_500d_TF',
+            'PQ_Cosine_scBiMap_500d_TF',
+            'Minimap2',
+            'MinHash_Jaccard_None_None',
+        ])
+
+rule mytest4:
+    input:
+        expand("data/evaluation/human/{region}/ONT_R9/kmer_k16/{method}_overlap_stat.tsv",
+        method=[
+            'HNSW_Cosine_Spectural_500d_TF-IDF',
+            'HNSW_Cosine_Spectural_500d_IDF',
+            'HNSW_Cosine_Spectural_500d_None',
+            'HNSW_Cosine_Spectural_500d_TF',
+            'Exact_Cosine_Spectural_500d_TF-IDF',
+            'Exact_Cosine_Spectural_500d_IDF',
+            'Exact_Cosine_Spectural_500d_TF',
+            'Exact_Cosine_Spectural_500d_None',
+        ],region=['IGK','IGH','TRA'])
+rule mytest5:
+    input:
+        expand("data/evaluation/human/chr22/ONT_R9/kmer_k16/{method}_overlap_stat.tsv",
+        method=['HNSW_Cosine_Spectural_500d_TF','SimHash_Cosine_None_TF'])
+rule mytest7:
+    input:
+        expand("data/evaluation/human/chr22/ONT_R9/kmer_k16/{method}_overlap_stat.tsv",
+        method=['SimHash_Cosine_None_TF'])
+rule mytest6:
+    input:
+        "data/minimap2/human/HLA/ONT_R9/alignment.paf.gz"

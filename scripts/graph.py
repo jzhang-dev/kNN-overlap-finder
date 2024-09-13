@@ -266,5 +266,6 @@ def get_overlap_statistics(query_graph: nx.Graph, reference_graph: nx.Graph):
         singleton_count=singleton_count,
         singleton_fraction=singleton_fraction,
         N50=N50,
+        component_sizes=component_sizes
     )
     return result

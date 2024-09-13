@@ -2,11 +2,12 @@ channels:
   - conda-forge
   - bioconda
   - defaults
+  - pytorch
 dependencies:
   - anndata == 0.10.7 
   - biopython 
   - hnswlib == 0.7.0
-  - matplotlib 
+  - matplotlib
   - nbconvert
   - notebook
   - numpy 
@@ -17,6 +18,9 @@ dependencies:
   - requests
   - scanpy == 1.10.1
   - scikit-learn == 1.5.0
-  - sharedmem ~= 0.3.5
-
-
+  - pysam == 0.22.1
+  - sharedmem 
+  - mmh3
+  - faiss-cpu
+  - memory_profiler == 0.61.0
+  - pygraphviz

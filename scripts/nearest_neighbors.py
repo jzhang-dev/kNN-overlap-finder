@@ -14,10 +14,15 @@ import pynndescent
 import hnswlib
 import faiss
 from numba import njit, prange
-
+from itertools import chain 
+from collections import Counter
+import secrets
+import random
+import pynear
 
 from data_io import parse_paf_file, get_sibling_id
-
+def hamming_distance(x, y):  
+    return np.count_nonzero(x != y)
 
 @dataclass
 class _NearestNeighbors:
@@ -585,16 +590,13 @@ class ProductQuantization(_NearestNeighbors):
         self,
         data: csr_matrix | np.ndarray,
         n_neighbors: int,
-        metric: Literal["euclidean"] = "euclidean",
+        metric: Literal["euclidean","cosine"] = "euclidean",
         *,
         m=8,
         nbits=8,
         seed=455390,
     ) -> np.ndarray:
-        if metric == "euclidean":
-            faiss_metric = faiss.METRIC_L2
-        else:
-            raise ValueError()
+
 
         if sparse.issparse(data):
             raise TypeError("ProductQuantization does not support sparse arrays.")
@@ -609,8 +611,88 @@ class ProductQuantization(_NearestNeighbors):
             new_feature_count = feature_count
         assert data.shape[1]
 
-        index_pq = faiss.IndexPQ(new_feature_count, m, nbits, faiss_metric)
-        index_pq.train(data)  # type: ignore
-        index_pq.add(data)  # type: ignore
-        _, nbr_indices = index_pq.search(data, n_neighbors)  # type: ignore
+        if metric == "euclidean":
+            measure = faiss.METRIC_L2
+        else:
+            measure = faiss.METRIC_INNER_PRODUCT
+            data = np.array(data,order='C').astype('float32')
+            faiss.normalize_L2(data)
+        
+        param = "PQ8"
+        index = faiss.index_factory(new_feature_count,param,measure)
+        index.train(data)
+        index.add(data)
+        _, nbr_indices = index.search(data, n_neighbors)  # type: ignore
+        return nbr_indices
+
+class IVFProductQuantization(_NearestNeighbors):
+    def get_neighbors(
+        self,
+        data: csr_matrix | np.ndarray,
+        n_neighbors: int,
+        metric: Literal["euclidean","cosine"] = "euclidean",
+        *,
+        m=8,
+        nbits=8, 
+        seed=455390,
+    ) -> np.ndarray:
+
+
+        if sparse.issparse(data):
+            raise TypeError("ProductQuantization does not support sparse arrays.")
+        feature_count = data.shape[1]
+        if feature_count % m != 0:
+            new_feature_count = feature_count // m * m
+            feature_indices = np.random.default_rng(seed).choice(
+                feature_count, new_feature_count, replace=False, shuffle=False
+            )
+            data = data[:, feature_indices]
+        else:
+            new_feature_count = feature_count
+        assert data.shape[1]
+
+        if metric == "euclidean":
+            measure = faiss.METRIC_L2
+        else:
+            measure = faiss.METRIC_INNER_PRODUCT
+            data = np.array(data,order='C').astype('float32')
+            faiss.normalize_L2(data)
+        
+        param = "IVF100,PQ8"
+        index = faiss.index_factory(new_feature_count,param,measure)
+        index.train(data)
+        index.add(data)
+        _, nbr_indices = index.search(data, n_neighbors)  # type: ignore
+        return nbr_indices
+
+class SimHash(_NearestNeighbors):
+    def _hash(self,kmer_index: int) -> np.ndarray:  
+        hash_value = mmh3.hash(str(kmer_index))
+        random.seed(hash_value)
+        random_number = secrets.token_bytes(400)
+        random_integer = int.from_bytes(random_number, byteorder='big')  
+        binary_array = format(random_integer, '03200b')
+        hash_array = list(binary_array)
+        return hash_array
+    def _get_table(
+        self,
+        kmer_num: list) -> Mapping[int,list]:  
+        hash_table = np.empty((kmer_num,3200),dtype=np.int8) 
+        for kmer_index in range(kmer_num):
+            hash_array = self._hash(kmer_index) 
+            hash_table[kmer_index,:]=hash_array
+        hash_table = np.where(hash_table == 0, -1, 1) 
+        return hash_table
+    def get_neighbors(
+        self,
+        data: csr_matrix | np.ndarray,
+        n_neighbors: int,
+    ) -> np.ndarray:
+        kmer_num = data.shape[1]
+        hash_table = self._get_table(kmer_num)
+        simhash = data@hash_table
+        vptree = pynear.VPTreeBinaryIndex()
+        vptree.set(simhash.astype(np.uint8))
+        vptree_indices, vptree_distances = vptree.searchKNN(simhash.astype(np.uint8), n_neighbors+1)
+        nbr_indices= np.array(vptree_indices)[:,:-1][:,::-1]
         return nbr_indices

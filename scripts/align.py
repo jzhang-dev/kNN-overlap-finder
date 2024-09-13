@@ -16,7 +16,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 lib_dir = os.path.join(current_dir, "..", "lib")
 print(lib_dir)
 sys.path.append(lib_dir)
-import Aligner as cAligner  # type: ignore
+#import Aligner as cAligner  # type: ignore
 
 
 @dataclass(init=False)
