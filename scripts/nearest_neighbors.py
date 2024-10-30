@@ -118,7 +118,7 @@ class HNSW(_NearestNeighbors):
         efConstruction — how many entry points will be explored when building the index.
         """
         if sparse.issparse(data):
-            raise TypeError("HNSW cannot be used on sparse arrays.")
+            data = data.toarray()
         if metric == "euclidean":
             space = "l2"
         else:
@@ -134,7 +134,6 @@ class HNSW(_NearestNeighbors):
         p.set_ef(ef_search)
         nbr_indices, _ = p.knn_query(data, k=n_neighbors)
         return nbr_indices
-
 
 class LowHash(_NearestNeighbors):
 
@@ -636,8 +635,6 @@ class IVFProductQuantization(_NearestNeighbors):
         nbits=8, 
         seed=455390,
     ) -> np.ndarray:
-
-
         if sparse.issparse(data):
             raise TypeError("ProductQuantization does not support sparse arrays.")
         feature_count = data.shape[1]
@@ -666,30 +663,21 @@ class IVFProductQuantization(_NearestNeighbors):
         return nbr_indices
 
 class SimHash(_NearestNeighbors):
-    def _hash(self,kmer_index: int) -> np.ndarray:  
-        hash_value = mmh3.hash(str(kmer_index))
-        random.seed(hash_value)
-        random_number = secrets.token_bytes(400)
-        random_integer = int.from_bytes(random_number, byteorder='big')  
-        binary_array = format(random_integer, '03200b')
-        hash_array = list(binary_array)
-        return hash_array
     def _get_table(
-        self,
-        kmer_num: list) -> Mapping[int,list]:  
-        hash_table = np.empty((kmer_num,3200),dtype=np.int8) 
-        for kmer_index in range(kmer_num):
-            hash_array = self._hash(kmer_index) 
-            hash_table[kmer_index,:]=hash_array
-        hash_table = np.where(hash_table == 0, -1, 1) 
+        self,kmer_num: int,seed: int) -> Mapping[int,list]:
+        rng = np.random.default_rng(seed)
+        binary_array = rng.integers(0, 2, size=kmer_num*3200,dtype=np.int8)
+        hash_table =np.reshape(binary_array,(kmer_num,3200))
+        hash_table[hash_table == 0] = -1 
         return hash_table
     def get_neighbors(
         self,
         data: csr_matrix | np.ndarray,
         n_neighbors: int,
+        seed=20141025,
     ) -> np.ndarray:
         kmer_num = data.shape[1]
-        hash_table = self._get_table(kmer_num)
+        hash_table = self._get_table(kmer_num,seed=seed)
         simhash = data@hash_table
         vptree = pynear.VPTreeBinaryIndex()
         vptree.set(simhash.astype(np.uint8))

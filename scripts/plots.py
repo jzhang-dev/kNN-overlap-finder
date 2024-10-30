@@ -86,7 +86,7 @@ def plot_read_graph(
     RED = (1, 0.1, 0.1, 1)
 
     edge_colors = []
-    for edge, attr in g.edges.items():
+    for edge, attr in g.edges.items(): 
         color = "k"
         k1, k2 = edge
 
