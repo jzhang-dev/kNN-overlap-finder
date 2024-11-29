@@ -92,6 +92,44 @@ rule run_pbsim3_ont:
         rm -rf {output.folder}/output*
         """
 
+rule run_pbsim3_meta_ont:
+    input:
+        reference="data/metagenome_reference/GCR.fa.split/GCR.part_{num}.fa",
+        model="resources/pbsim/ERRHMM-ONT-HQ.model",
+    output:
+        folder=directory(
+            "data/metagenome_reads/part{num}/pbsim_ONT_{accuracy}_{length_kb}k"
+        ),
+        fasta="data/metagenome_reads/part{num}/pbsim_ONT_{accuracy}_{length_kb}k/reads.fasta.gz",
+        maf="data/metagenome_reads/part{num}/pbsim_ONT_{accuracy}_{length_kb}k/alignment.maf.gz",
+    wildcard_constraints:
+        accuracy=r"\d+",
+        length_kb=r"\d+",
+    params:
+        accuracy=lambda wildcards: float(wildcards["accuracy"]) / 100,
+        length_mean=lambda wildcards: int(wildcards["length_kb"]) * 1000,
+        length_sd=lambda wildcards: int(wildcards["length_kb"]) * 500,
+        length_min=10_000,
+        depth=10,
+        seed=5023967,
+    conda:
+        "envs/pbsim.yaml"
+    shell:
+        """
+        pbsim \
+            --strategy wgs \
+            --method errhmm \
+            --errhmm {input.model} \
+            --depth {params.depth} \
+            --accuracy-mean {params.accuracy} \
+            --length-mean {params.length_mean} \
+            --length-sd  {params.length_sd} \
+            --length-min {params.length_min} \
+            --genome {input.reference} \
+            --seed {params.seed} \
+            --prefix {output.folder}/output
+       """
+
 rule run_pbsim3_pb_hifi:
     input:
         reference="data/regional_reference/{sample}/{region}/reference.fasta.gz",
@@ -280,13 +318,11 @@ rule get_neighbors:
         nbr_indice="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_nbr_matrix.npz",
     benchmark:
         "data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_benchmark.csv"
-    log:
-        notebook="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_get_neighbors.py.ipynb",
     threads: 1
     conda:
         "envs/evaluate.yaml"
-    notebook:
-        "notebooks/get_neighbors_indice.smk.py.ipynb"
+    script:
+        "scripts/get_neighbors.smk.py"
 
 
 rule evaluate_configs:
@@ -297,13 +333,11 @@ rule evaluate_configs:
         nbr_indice="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_nbr_matrix.npz",
     output:
         overlap="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_overlap_stat.tsv",
-    log:
-        notebook="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_evaluate_configs.py.ipynb",
     threads: 8
     conda:
         "envs/evaluate.yaml"
-    notebook:
-        "notebooks/evaluate_configs.smk.py.ipynb"
+    script:
+        "scripts/evaluate_neighbors.smk.py"
 
 
 rule evaluate_and_visualize_configs:
@@ -324,12 +358,27 @@ rule evaluate_and_visualize_configs:
     notebook:
         "notebooks/evaluate_configs_visulization.smk.ipynb"
 
+rule get_neighbors_meta:
+    input:
+        ref_tax="data/feature_matrix/metagenome/{platform}/{encoding}/ref_read_tax.json.gz",
+        que_tax="data/feature_matrix/metagenome/{platform}/{encoding}/que_read_tax.json.gz",
+        ref_feature_matrix="data/feature_matrix/metagenome/{platform}/{encoding}/ref_feature_matrix.npz",
+        que_feature_matrix="data/feature_matrix/metagenome/{platform}/{encoding}/que_feature_matrix.npz",
+    output:
+        nbr_indice="data/evaluation/metagenome/{platform}/{encoding}/{method}_nbr_matrix.npz",
+        stat="data/evaluation/metagenome/{platform}/{encoding}/{method}_stat.tsv",
+    threads: 8
+    conda:
+        "envs/evaluate.yaml"
+    script:
+        "scripts/metagenome_kNN.smk.py"
 
 # ----------------------------------------------------------------------------------------------------
 
 rule article_test_ont:
     input:
-        expand("data/evaluation/TAIR/chr3/pbsim_pb_hifi_10k/kmer_k16/{method}_overlap_stat.tsv",
+        expand("data/evaluation/CHM13/{region}/pbsim_ONT_95_20k/kmer_k16/{method}_overlap_stat.tsv",
+        region=['HLA','IGK'],
         method=[
             'WeightedMinHash_Jaccard_None_TF',
             'WeightedMinHash_Jaccard_None_IDF',
@@ -364,16 +413,86 @@ rule article_test_ont:
             'HNSW_Euclidean_Spectural_500d_TF-IDF',
         ])
 
-rule tmp1:
+rule article_test_meta:
     input:
-        expand("data/evaluation/TAIR/chr3/pbsim_ONT_93_30k/kmer_k16/{method}_overlap_stat.tsv",
+        expand("data/evaluation/metagenome/pbsim_ONT_95_20k/kmer_16/{method}_nbr_matrix.npz",
         method=[
-            'SimHash_Cosine_None_TF',
-            'SimHash_Cosine_None_IDF',
-            'SimHash_Cosine_None_TF-IDF',
-            'SimHash_Cosine_None_None',
+            'Exact_Euclidean_None_None',
+            'Exact_Euclidean_None_TF',
+            'Exact_Euclidean_None_IDF',
+            'Exact_Euclidean_None_TF-IDF',
+            'Exact_Cosine_None_None',
+            'Exact_Cosine_None_TF',
+            'Exact_Cosine_None_IDF',
+            'Exact_Cosine_None_TF-IDF',
+            'HNSW_Cosine_None_None',
+            'HNSW_Euclidean_None_None',##add pre-process if fesible
+            'HNSW_Cosine_scBiMap_500d_None',
+            'HNSW_Cosine_scBiMap_500d_TF',
+            'HNSW_Cosine_scBiMap_500d_IDF',
+            'HNSW_Cosine_scBiMap_500d_TF-IDF',
+            'HNSW_Euclidean_scBiMap_500d_None',
+            'HNSW_Euclidean_scBiMap_500d_TF',
+            'HNSW_Euclidean_scBiMap_500d_IDF',
+            'HNSW_Euclidean_scBiMap_500d_TF-IDF',
+            'HNSW_Cosine_Spectural_500d_None',
+            'HNSW_Cosine_Spectural_500d_TF',
+            'HNSW_Cosine_Spectural_500d_IDF',
+            'HNSW_Cosine_Spectural_500d_TF-IDF',
+            'HNSW_Euclidean_Spectural_500d_None',
+            'HNSW_Euclidean_Spectural_500d_TF',
+            'HNSW_Euclidean_Spectural_500d_IDF',
+            'HNSW_Euclidean_Spectural_500d_TF-IDF',
         ])
 
+rule article_test_meta2:
+    input:
+        expand("data/evaluation/metagenome/pbsim_ONT_95_20k/kmer_16/{method}_nbr_matrix.npz",
+        method=[
+            'HNSW_Cosine_scBiMap_500d_TF',
+        ])
+
+rule tmp1:
+    input:
+        expand("data/evaluation/CHM13/chr6_50M/pbsim_ONT_93_30k/kmer_k16/{method}_overlap_stat.tsv",
+        method=[
+            'HNSW_Euclidean_SimHash_3200d_TF',
+            'HNSW_Euclidean_SimHash_3200d_IDF',
+            'HNSW_Euclidean_SimHash_3200d_TF-IDF',
+            'HNSW_Euclidean_SimHash_3200d_None',
+            'Exact_Euclidean_SimHash_3200d_None',
+            'Exact_Euclidean_SimHash_3200d_TF',
+            'Exact_Euclidean_SimHash_3200d_IDF',
+            'Exact_Euclidean_SimHash_3200d_TF-IDF',
+            'HNSW_Cosine_SimHash_3200d_TF',
+            'HNSW_Cosine_SimHash_3200d_IDF',
+            'HNSW_Cosine_SimHash_3200d_TF-IDF',
+            'HNSW_Cosine_SimHash_3200d_None',
+            'Exact_Cosine_SimHash_3200d_None',
+            'Exact_Cosine_SimHash_3200d_TF',
+            'Exact_Cosine_SimHash_3200d_IDF',
+            'Exact_Cosine_SimHash_3200d_TF-IDF',
+            'HNSW_Euclidean_GaussianRP_3200d_None',
+            'HNSW_Euclidean_GaussianRP_3200d_TF',
+            'HNSW_Euclidean_GaussianRP_3200d_IDF',
+            'HNSW_Euclidean_GaussianRP_3200d_TF-IDF',
+            'HNSW_Euclidean_SparseRP_3200d_None',
+            'HNSW_Euclidean_SparseRP_3200d_TF',
+            'HNSW_Euclidean_SparseRP_3200d_TF-IDF',
+            'HNSW_Euclidean_SparseRP_3200d_IDF',
+            'Exact_Euclidean_GaussianRP_3200d_None',
+            'Exact_Euclidean_GaussianRP_3200d_TF',
+            'Exact_Euclidean_GaussianRP_3200d_IDF',
+            'Exact_Euclidean_GaussianRP_3200d_TF-IDF',
+            'Exact_Euclidean_SparseRP_3200d_None',
+            'Exact_Euclidean_SparseRP_3200d_TF',
+            'Exact_Euclidean_SparseRP_3200d_TF-IDF',
+            'Exact_Euclidean_SparseRP_3200d_IDF'
+        ])
+
+rule meta:
+    input:
+        "data/metagenome_reads/part001/pbsim_ONT_95_20k/reads.fasta.gz"
 
 rule only_statistic:
     input:

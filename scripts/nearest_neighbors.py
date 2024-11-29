@@ -9,6 +9,7 @@ from scipy import sparse
 from scipy.sparse._csr import csr_matrix
 import numpy as np
 from numpy import matlib, ndarray
+from numpy.typing import NDArray
 import sklearn.neighbors
 import pynndescent
 import hnswlib
@@ -139,7 +140,7 @@ class LowHash(_NearestNeighbors):
 
     @staticmethod
     def _hash(x: int, seed: int) -> int:
-        hash_value = mmh3.hash(str(x), seed=seed)
+        hash_value = mmh3.hash(str(x), seed=int(seed))
         return hash_value
 
     @staticmethod
@@ -663,24 +664,124 @@ class IVFProductQuantization(_NearestNeighbors):
         return nbr_indices
 
 class SimHash(_NearestNeighbors):
-    def _get_table(
-        self,kmer_num: int,seed: int) -> Mapping[int,list]:
+    @staticmethod
+    def _get_hash_table(
+        feature_count: int, repeats: int, seed: int
+    ) -> NDArray[np.int8]:
         rng = np.random.default_rng(seed)
-        binary_array = rng.integers(0, 2, size=kmer_num*3200,dtype=np.int8)
-        hash_table =np.reshape(binary_array,(kmer_num,3200))
-        hash_table[hash_table == 0] = -1 
+        hash_table = rng.integers(
+            0, 2, size=(feature_count, repeats * 8), dtype=np.int8
+        )
+        hash_table = hash_table * 2 - 1
         return hash_table
+    
+    @staticmethod
+    def get_simhash(
+        data: NDArray | csr_matrix, hash_table: NDArray
+    ) -> NDArray[np.uint8]:
+        simhash = data @ hash_table
+        binary_simhash = np.where(simhash > 0, 1, 0).astype(np.uint8)
+        packed_simhash = np.packbits(binary_simhash, axis=-1)
+        return packed_simhash
+
     def get_neighbors(
         self,
         data: csr_matrix | np.ndarray,
         n_neighbors: int,
+        repeats=400,
         seed=20141025,
     ) -> np.ndarray:
+        assert data.shape is not None
         kmer_num = data.shape[1]
-        hash_table = self._get_table(kmer_num,seed=seed)
-        simhash = data@hash_table
+        hash_table = self._get_hash_table(kmer_num, repeats=repeats, seed=seed)
+        simhash = self.get_simhash(data, hash_table)
         vptree = pynear.VPTreeBinaryIndex()
-        vptree.set(simhash.astype(np.uint8))
-        vptree_indices, vptree_distances = vptree.searchKNN(simhash.astype(np.uint8), n_neighbors+1)
-        nbr_indices= np.array(vptree_indices)[:,:-1][:,::-1]
+        vptree.set(simhash)
+        vptree_indices, vptree_distances = vptree.searchKNN(simhash, n_neighbors + 1)
+        nbr_indices = np.array(vptree_indices)[:, :-1][:, ::-1]
+        return nbr_indices
+    
+
+class BlockSimHash(SimHash):
+    @staticmethod
+    def get_simhash(
+        data: NDArray | csr_matrix, hash_table: NDArray, *, block_size=2**30
+    ) -> NDArray[np.uint8]:
+        sample_count, _ = data.shape
+        _, hash_size = hash_table.shape
+        if hash_size % 8 != 0:
+            raise ValueError()
+        result = np.empty(shape=(sample_count, hash_size // 8), dtype=np.uint8)
+
+        # 将稠密矩阵 hash_table 分块，逐块进行乘法计算，减少内存峰值
+        for start_col in range(0, hash_size, 8 * block_size):
+
+            end_col = min(start_col + 8 * block_size, hash_size)
+            block_hash_table = hash_table[:, start_col:end_col]
+
+            # 进行块矩阵乘法
+            block_result = data.dot(block_hash_table)
+            binary_block_result = np.where(block_result > 0, 1, 0).astype(np.uint8)
+            packed_block_result = np.packbits(binary_block_result, axis=-1)
+
+            # 将结果写入预先分配的结果矩阵
+            result[:, start_col // 8 : end_col // 8] = packed_block_result
+
+        return result
+    
+
+class NewSimHash(SimHash):
+    @staticmethod
+    def get_simhash(data: NDArray | csr_matrix, hash_table: NDArray):
+        simhash = (data @ hash_table).astype(np.uint8)
+        return simhash
+
+class NewSimHash2(SimHash):
+    @staticmethod
+    def get_simhash(data: NDArray | csr_matrix, hash_table: NDArray):
+        simhash = (data @ hash_table)
+        return simhash
+    
+    def get_neighbors(
+        self,
+        data: csr_matrix | np.ndarray,
+        n_neighbors: int,
+        repeats=400,
+        seed=20141025,
+    ) -> np.ndarray:
+        import sklearn.neighbors
+
+        assert data.shape is not None
+        kmer_num = data.shape[1]
+
+        hash_table = self._get_hash_table(kmer_num, repeats=repeats, seed=seed)
+
+        simhash = self.get_simhash(data, hash_table)
+        nbrs = sklearn.neighbors.NearestNeighbors(
+            n_neighbors=n_neighbors, metric='cosine'
+        )
+
+        nbrs.fit(simhash)
+        _, nbr_indices = nbrs.kneighbors(simhash)
+        return nbr_indices
+    
+class NewSimHash3(SimHash):
+    @staticmethod
+    def get_simhash(data: NDArray | csr_matrix, hash_table: NDArray):
+        simhash = (data @ hash_table)
+        return simhash
+    
+    def get_neighbors(
+        self,
+        data: csr_matrix | np.ndarray,
+        n_neighbors: int,
+        repeats=400,
+        seed=20141025,
+    ) -> np.ndarray:
+        assert data.shape is not None
+        kmer_num = data.shape[1]
+        hash_table = self._get_hash_table(kmer_num, repeats=repeats, seed=seed)
+        simhash = self.get_simhash(data, hash_table)
+        myhnsw = HNSW()
+        nbr_indices = myhnsw.get_neighbors(simhash,n_neighbors)
         return nbr_indices

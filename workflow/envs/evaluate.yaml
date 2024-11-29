@@ -10,7 +10,7 @@ dependencies:
   - matplotlib
   - nbconvert
   - notebook
-  - numpy 
+  - numpy == 1.26.4
   - pandas 
   - pynndescent == 0.5.12
   - python == 3.12.3
@@ -24,3 +24,7 @@ dependencies:
   - faiss-cpu
   - memory_profiler == 0.61.0
   - pygraphviz
+  - nltk
+  - networkx
+  - ipykernel
+  - scipy == 1.11.3

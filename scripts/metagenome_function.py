@@ -27,7 +27,6 @@ import mmh3
 import sharedmem
 from sklearn.neighbors import NearestNeighbors  
 import numpy as np
-from numba import njit, prange
 from itertools import chain 
 from collections import Counter
 from sklearn.metrics import precision_score, recall_score  
@@ -185,19 +184,34 @@ def get_simhash(
     reads_simhash_array = np.array(all_read_simhash)
     return reads_simhash_array 
 
-def evaluate(indices,ref_read_tax,que_read_tax):
+def evaluate_meta(nbr_indice,ref_read_tax,que_read_tax):
     actual = []
     prediction = []
-    for query_read_num,x in enumerate(indices):
+    for query_read_num,x in enumerate(nbr_indice):
         neighbor = x[0]
         neighbor = (neighbor-1)/2  if neighbor %2 !=0 else neighbor/2
         query_read_num = (query_read_num-1)/2  if query_read_num %2 !=0 else query_read_num/2
-        prediction.append(ref_read_tax[neighbor])
-        actual.append(que_read_tax[query_read_num])
-
-    precision = precision_score(actual, prediction,average='macro')
-    sensitivity = recall_score(actual, prediction,average='macro')
-    ##计算每个类别的
-    precision_sep = precision_score(actual, prediction, average=None)  
-    sensitivity_sep = recall_score(actual, prediction, average=None)
-    return precision,sensitivity,precision_sep,sensitivity_sep
+        prediction.append(ref_read_tax[str(int(neighbor))])
+        actual.append(que_read_tax[str(int(query_read_num))])
+    precision_sep=[]
+    sensitivity_sep=[]
+    for i in set(actual):
+        tp = 0
+        fp = 0
+        fn = 0
+        for x in range(len(actual)):
+            if actual[x] == i:
+                if actual[x] == prediction[x]:
+                    tp += 1
+                else:
+                    fn += 1
+            else:
+                if prediction[x] == i:
+                    fp += 1
+        pre = tp/(tp+fp)
+        sen = tp/(tp+fn)
+        precision_sep.append(pre)
+        sensitivity_sep.append(sen)
+        precision = sum(precision_sep)/len(precision_sep)
+        sensitivity = sum(sensitivity_sep)/len(sensitivity_sep)
+    return precision_sep,sensitivity_sep,precision,sensitivity
