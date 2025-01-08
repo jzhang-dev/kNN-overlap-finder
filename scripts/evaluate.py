@@ -1,6 +1,7 @@
 import os, gzip, pickle
 import time
 from sklearn.feature_extraction.text import TfidfTransformer
+import scipy
 from scipy.sparse._csr import csr_matrix
 from typing import Sequence, Type, Mapping,Literal
 from dataclasses import dataclass, field
@@ -55,6 +56,8 @@ class NearestNeighborsConfig:
             start_time = time.time()
             _data = self.dimension_reduction_method().transform(_data, **self.dimension_reduction_kw)
             elapsed_time['dimension_reduction'] = time.time() - start_time
+            if scipy.sparse.issparse(_data):
+                _data = _data.toarray()
         
         if verbose:
             print("Nearest neighbors.")

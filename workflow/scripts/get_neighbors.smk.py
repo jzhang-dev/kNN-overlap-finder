@@ -1,3 +1,5 @@
+sys.path.append("scripts")
+
 import pickle, os, gzip, json, sys, itertools
 from pathlib import Path
 from importlib import reload
@@ -11,56 +13,31 @@ import pysam
 import scipy as sp
 import seaborn
 import sharedmem
+from sklearn.decomposition import PCA
 
-
-plt.rcParams["figure.facecolor"] = "white"
-plt.rcParams["figure.dpi"] = 300
+from str2config import parse_string_to_config
 
 
 sys.path.append("scripts")
 sys.path.append("../../scripts")
 
-from data_io import is_fwd_id, get_fwd_id, get_sibling_id
-from dim_reduction import SpectralEmbedding, scBiMapEmbedding
 from nearest_neighbors import (
     ExactNearestNeighbors,
-    NNDescent,
-    WeightedLowHash,
-    PAFNearestNeighbors,
-    LowHash,
-    HNSW,
-    ProductQuantization,
-    _NearestNeighbors,
-    IVFProductQuantization,
-    SimHash,
+    PAFNearestNeighbors
 )
-from graph import OverlapGraph, GenomicInterval, get_overlap_statistics, remove_false_edges
-from truth import get_overlaps
 from evaluate import NearestNeighborsConfig, compute_nearest_neighbors
 
 MAX_SAMPLE_SIZE = int(1e9)
 COVERAGE_DEPTH = 20
 
-sample = snakemake.wildcards['sample']
-dataset = snakemake.wildcards['platform']
-region = snakemake.wildcards['region']
-method = snakemake.wildcards['method']
+time_path = sys.argv[1]
+paf_path = sys.argv[2]
+npz_path = sys.argv[3]
+tsv_path = sys.argv[4]
+json_path = sys.argv[5]
+nbr_path = sys.argv[6]
+method = sys.argv[7]
 
-if method =="Minimap2":
-    paf_path = snakemake.input['paf_minimap2']
-elif method == "Blend":
-    paf_path = snakemake.input['paf_blend']
-else:
-    paf_path = ''
-
-npz_path = snakemake.input['feature_matrix']
-tsv_path = snakemake.input['metadata']
-json_path = snakemake.input['read_features']
-
-nbr_path = snakemake.output['nbr_indice']
-threads  = snakemake.threads
-
-print(sample, dataset, region)
 
 meta_df = pd.read_table(tsv_path).iloc[:MAX_SAMPLE_SIZE, :].reset_index()
 read_indices = {read_name: read_id for read_id, read_name in meta_df['read_name'].items()}
@@ -83,10 +60,17 @@ kw = dict(data=feature_matrix)
 max_bucket_size = COVERAGE_DEPTH * 1.5
 max_n_neighbors = COVERAGE_DEPTH
 
-with open('workflow/notebooks/config_dict.pkl', 'rb') as file:  
-    config_dict = pickle.load(file)
+print(method)
+if method == 'Minimap2':
+    config=NearestNeighborsConfig(
+        nearest_neighbors_method=PAFNearestNeighbors,
+        description="Minimap2 all-vs-all",
+        nearest_neighbors_kw=dict(paf_path=paf_path, read_indices=read_indices)
+        )
+else:
+    config = parse_string_to_config(method)
 
-config = config_dict[method]
+
 kw = dict(data=feature_matrix)
 
 neighbor_indices, elapsed_time, peak_memory = compute_nearest_neighbors(
@@ -95,5 +79,7 @@ neighbor_indices, elapsed_time, peak_memory = compute_nearest_neighbors(
     n_neighbors=max_n_neighbors,
     read_features=read_features,
 )
-print(neighbor_indices)
 np.savez(nbr_path, neighbor_indices)
+
+with open(time_path, 'w', encoding='utf-8') as f:
+    json.dump(elapsed_time, f, ensure_ascii=False)

@@ -187,9 +187,10 @@ def get_simhash(
 def evaluate_meta(nbr_indice,ref_read_tax,que_read_tax):
     actual = []
     prediction = []
+    ref_read_tax['-1'] = 'NoNeighbor'
     for query_read_num,x in enumerate(nbr_indice):
         neighbor = x[0]
-        neighbor = (neighbor-1)/2  if neighbor %2 !=0 else neighbor/2
+        neighbor = (neighbor-1)/2  if neighbor %2 != 0 else neighbor/2
         query_read_num = (query_read_num-1)/2  if query_read_num %2 !=0 else query_read_num/2
         prediction.append(ref_read_tax[str(int(neighbor))])
         actual.append(que_read_tax[str(int(query_read_num))])

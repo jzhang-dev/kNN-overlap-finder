@@ -167,6 +167,7 @@ class OverlapGraph(nx.Graph):
             graph.nodes[read]["contained"] = True
 
         # Identify non-redundant overlaps
+        min_overhang_size = []
         for node_0 in graph.nodes():
             nearest_left_node = None
             min_left_overhang = float("inf")
@@ -185,11 +186,16 @@ class OverlapGraph(nx.Graph):
                 ):
                     min_right_overhang = data["right_overhang_size"]
                     nearest_right_node = node_1
+            min_overhang_size.append(min_left_overhang)
+            min_overhang_size.append(min_right_overhang)
             if nearest_left_node is not None:
                 graph[node_0][nearest_left_node]["redundant"] = False
             if nearest_right_node is not None:
                 graph[node_0][nearest_right_node]["redundant"] = False
-
+        import math
+        filtered_data = [x for x in min_overhang_size if not math.isinf(x)]
+        mean_overhang_size = sum(filtered_data)/len(filtered_data)
+        print(mean_overhang_size)
         return graph
 
     def align_edges(
@@ -266,6 +272,10 @@ def get_overlap_statistics(query_graph: nx.Graph, reference_graph: nx.Graph):
         singleton_count=singleton_count,
         singleton_fraction=singleton_fraction,
         N50=N50,
-        continuity=continuity
+        continuity=continuity,
+        nr_true_positive_edges=len(nr_true_positive_edges),
+        nr_reference_edges=len(nr_reference_edges),
+        true_positive_edges=len(true_positive_edges),
+        reference_edges=len(reference_edges)
     )
     return result

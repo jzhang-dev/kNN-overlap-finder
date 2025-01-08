@@ -11,15 +11,14 @@ import numpy as np
 from numpy import matlib, ndarray
 from numpy.typing import NDArray
 import sklearn.neighbors
-import pynndescent
 import hnswlib
-import faiss
-from numba import njit, prange
 from itertools import chain 
 from collections import Counter
 import secrets
 import random
 import pynear
+import faiss
+import pynndescent
 
 from data_io import parse_paf_file, get_sibling_id
 def hamming_distance(x, y):  
@@ -407,136 +406,136 @@ class WeightedLowHash(LowHash):
         return nbr_matrix
 
 
-@njit(parallel=True)
-def _argpartition(arr, k, axis=0):
-    """
-    This function works like numpy.argpartition,
-    but only returns the first k indices.
-    This function is designed for Numba,
-    as numpy.argpartition is not fully supported in Numba.
+# @njit(parallel=True)
+# def _argpartition(arr, k, axis=0):
+#     """
+#     This function works like numpy.argpartition,
+#     but only returns the first k indices.
+#     This function is designed for Numba,
+#     as numpy.argpartition is not fully supported in Numba.
 
-    >>> a = np.array([[1, 2, 3], [3,0,1], [3, 3, 1], [5, 0, 0]])
-    >>> _argpartition(a, 2, axis=0)
-    array([[0, 3, 3],
-           [2, 1, 2]])
-    """
-    if axis == 0:
-        result = np.empty((k, arr.shape[1]), dtype=np.int64)
-        for i in prange(arr.shape[1]):
-            partitioned_indices = np.argpartition(arr[:, i], k)[:k]
-            result[:, i] = partitioned_indices
-    elif axis == 1:
-        result = np.empty((arr.shape[0], k), dtype=np.int64)
-        for i in prange(arr.shape[0]):
-            partitioned_indices = np.argpartition(arr[i, :], k)[:k]
-            result[i, :] = partitioned_indices
-    else:
-        raise ValueError("axis must be 0 or 1")
-    return result
-
-
-class JITWeightedLowHash(WeightedLowHash):
-    # This is not faster. Why?
-
-    @staticmethod
-    def _get_random_numbers(seed: int, feature_count: int, dimension_count: int):
-        rng = np.random.default_rng(seed)
-        beta = rng.uniform(0, 1, (feature_count, dimension_count))
-        x = rng.uniform(0, 1, (feature_count, dimension_count))
-        u1 = rng.uniform(0, 1, (feature_count, dimension_count))
-        u2 = rng.uniform(0, 1, (feature_count, dimension_count))
-        return beta, x, u1, u2
+#     >>> a = np.array([[1, 2, 3], [3,0,1], [3, 3, 1], [5, 0, 0]])
+#     >>> _argpartition(a, 2, axis=0)
+#     array([[0, 3, 3],
+#            [2, 1, 2]])
+#     """
+#     if axis == 0:
+#         result = np.empty((k, arr.shape[1]), dtype=np.int64)
+#         for i in prange(arr.shape[1]):
+#             partitioned_indices = np.argpartition(arr[:, i], k)[:k]
+#             result[:, i] = partitioned_indices
+#     elif axis == 1:
+#         result = np.empty((arr.shape[0], k), dtype=np.int64)
+#         for i in prange(arr.shape[0]):
+#             partitioned_indices = np.argpartition(arr[i, :], k)[:k]
+#             result[i, :] = partitioned_indices
+#     else:
+#         raise ValueError("axis must be 0 or 1")
+#     return result
 
 
-    @staticmethod
-    @njit
-    def _get_lowhash_positions(
-        weights: ndarray,
-        feature_indices: ndarray,
-        dimension_count: int,
-        lowhash_count: int,
-        beta: ndarray,
-        x: ndarray,
-        u1: ndarray,
-        u2: ndarray,
-    ) -> ndarray:
-        gamma = -np.log(np.multiply(u1[feature_indices, :], u2[feature_indices, :]))
-        t_matrix = np.floor(
-            np.divide(
-                np.repeat(np.log(weights), dimension_count).reshape(
-                    -1, dimension_count
-                ),
-                gamma,
-            )
-            + beta[feature_indices, :]
-        )
-        y_matrix = np.exp(np.multiply(gamma, t_matrix - beta[feature_indices, :]))
-        a_matrix = np.divide(
-            -np.log(x[feature_indices, :]),
-            np.divide(y_matrix, u1[feature_indices, :]),
-        )
-        lowhash_positions = _argpartition(a_matrix, lowhash_count, axis=0)
-        return lowhash_positions
+# class JITWeightedLowHash(WeightedLowHash):
+#     # This is not faster. Why?
 
-    def _pcws_low_hash(
-        self,
-        data: csr_matrix | np.ndarray,
-        lowhash_fraction: float | None = None,
-        lowhash_count: int | None = None,
-        repeats=1,
-        *,
-        seed=1,
-        use_weights=True,
-        verbose=True,
-    ) -> csr_matrix:
-        data = data.T.copy()  # rows for features; columns for instances; this will be a sparse CSC matrix
-        if not use_weights:
-            data[data > 0] = 1
-        feature_count, sample_count = data.shape
-        lowhash_buckets = sparse.dok_matrix(
-            (feature_count * repeats, sample_count), dtype=np.bool_
-        )
+#     @staticmethod
+#     def _get_random_numbers(seed: int, feature_count: int, dimension_count: int):
+#         rng = np.random.default_rng(seed)
+#         beta = rng.uniform(0, 1, (feature_count, dimension_count))
+#         x = rng.uniform(0, 1, (feature_count, dimension_count))
+#         u1 = rng.uniform(0, 1, (feature_count, dimension_count))
+#         u2 = rng.uniform(0, 1, (feature_count, dimension_count))
+#         return beta, x, u1, u2
 
-        dimension_count = repeats
-        # fingerprints_k = np.zeros((instance_num, dimension_num))
 
-        beta, x, u1, u2 = self._get_random_numbers(
-            seed=seed, feature_count=feature_count, dimension_count=dimension_count
-        )
+#     @staticmethod
+#     @njit
+#     def _get_lowhash_positions(
+#         weights: ndarray,
+#         feature_indices: ndarray,
+#         dimension_count: int,
+#         lowhash_count: int,
+#         beta: ndarray,
+#         x: ndarray,
+#         u1: ndarray,
+#         u2: ndarray,
+#     ) -> ndarray:
+#         gamma = -np.log(np.multiply(u1[feature_indices, :], u2[feature_indices, :]))
+#         t_matrix = np.floor(
+#             np.divide(
+#                 np.repeat(np.log(weights), dimension_count).reshape(
+#                     -1, dimension_count
+#                 ),
+#                 gamma,
+#             )
+#             + beta[feature_indices, :]
+#         )
+#         y_matrix = np.exp(np.multiply(gamma, t_matrix - beta[feature_indices, :]))
+#         a_matrix = np.divide(
+#             -np.log(x[feature_indices, :]),
+#             np.divide(y_matrix, u1[feature_indices, :]),
+#         )
+#         lowhash_positions = _argpartition(a_matrix, lowhash_count, axis=0)
+#         return lowhash_positions
 
-        for j_sample in range(0, sample_count):
-            feature_indices = sparse.find(data[:, j_sample] > 0)[0]
-            hash_count = feature_indices.shape[0]
-            sample_lowhash_count = self._get_lowhash_count(
-                hash_count=hash_count,
-                lowhash_fraction=lowhash_fraction,
-                lowhash_count=lowhash_count,
-            )
-            weights = data[feature_indices, j_sample].todense()
-            lowhash_positions = self._get_lowhash_positions(
-                weights=weights,
-                feature_indices=feature_indices,
-                dimension_count=dimension_count,
-                lowhash_count=sample_lowhash_count,
-                beta=beta,
-                x=x,
-                u1=u1,
-                u2=u2,
-            )
-            lowhash_features = feature_indices[lowhash_positions]
-            bucket_indices = []
-            for k in range(repeats):
-                features = lowhash_features[:, k]
-                bucket_indices.append(features + k * feature_count)
+#     def _pcws_low_hash(
+#         self,
+#         data: csr_matrix | np.ndarray,
+#         lowhash_fraction: float | None = None,
+#         lowhash_count: int | None = None,
+#         repeats=1,
+#         *,
+#         seed=1,
+#         use_weights=True,
+#         verbose=True,
+#     ) -> csr_matrix:
+#         data = data.T.copy()  # rows for features; columns for instances; this will be a sparse CSC matrix
+#         if not use_weights:
+#             data[data > 0] = 1
+#         feature_count, sample_count = data.shape
+#         lowhash_buckets = sparse.dok_matrix(
+#             (feature_count * repeats, sample_count), dtype=np.bool_
+#         )
 
-            lowhash_buckets[np.concatenate(bucket_indices), j_sample] = 1
+#         dimension_count = repeats
+#         # fingerprints_k = np.zeros((instance_num, dimension_num))
 
-            if verbose and j_sample % 1_000 == 0:
-                print(j_sample, end=" ")
-        if verbose:
-            print("")
-        lowhash_buckets = sparse.csr_matrix(lowhash_buckets)
-        return lowhash_buckets
+#         beta, x, u1, u2 = self._get_random_numbers(
+#             seed=seed, feature_count=feature_count, dimension_count=dimension_count
+#         )
+
+#         for j_sample in range(0, sample_count):
+#             feature_indices = sparse.find(data[:, j_sample] > 0)[0]
+#             hash_count = feature_indices.shape[0]
+#             sample_lowhash_count = self._get_lowhash_count(
+#                 hash_count=hash_count,
+#                 lowhash_fraction=lowhash_fraction,
+#                 lowhash_count=lowhash_count,
+#             )
+#             weights = data[feature_indices, j_sample].todense()
+#             lowhash_positions = self._get_lowhash_positions(
+#                 weights=weights,
+#                 feature_indices=feature_indices,
+#                 dimension_count=dimension_count,
+#                 lowhash_count=sample_lowhash_count,
+#                 beta=beta,
+#                 x=x,
+#                 u1=u1,
+#                 u2=u2,
+#             )
+#             lowhash_features = feature_indices[lowhash_positions]
+#             bucket_indices = []
+#             for k in range(repeats):
+#                 features = lowhash_features[:, k]
+#                 bucket_indices.append(features + k * feature_count)
+
+#             lowhash_buckets[np.concatenate(bucket_indices), j_sample] = 1
+
+#             if verbose and j_sample % 1_000 == 0:
+#                 print(j_sample, end=" ")
+#         if verbose:
+#             print("")
+#         lowhash_buckets = sparse.csr_matrix(lowhash_buckets)
+#         return lowhash_buckets
 
 
 class PAFNearestNeighbors(_NearestNeighbors):
@@ -599,7 +598,8 @@ class ProductQuantization(_NearestNeighbors):
 
 
         if sparse.issparse(data):
-            raise TypeError("ProductQuantization does not support sparse arrays.")
+            data = data.toarray()
+            #raise TypeError("ProductQuantization does not support sparse arrays.")
         feature_count = data.shape[1]
         if feature_count % m != 0:
             new_feature_count = feature_count // m * m
@@ -681,7 +681,7 @@ class SimHash(_NearestNeighbors):
     ) -> NDArray[np.uint8]:
         simhash = data @ hash_table
         binary_simhash = np.where(simhash > 0, 1, 0).astype(np.uint8)
-        packed_simhash = np.packbits(binary_simhash, axis=-1)
+        packed_simhash = np.packbits(binary_simhash, axis=-1) 
         return packed_simhash
 
     def get_neighbors(

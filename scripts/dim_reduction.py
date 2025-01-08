@@ -6,8 +6,13 @@ from scipy import sparse
 from scipy.sparse import csr_matrix
 from sklearn.preprocessing import normalize as normalize_function
 import anndata
+import sklearn
 from sklearn.decomposition import TruncatedSVD
 from sklearn import random_projection
+from sklearn.manifold import Isomap  
+import umap
+from sklearn.decomposition import PCA
+
 
 class _SpectralMatrixFree:
     """
@@ -82,10 +87,43 @@ class SpectralEmbedding(_DimensionReduction):
     
 class TruncatedSVD(_DimensionReduction):
     def transform(
-        self, data: csr_matrix | NDArray, n_dimensions: int
-    ) -> NDArray:
+        self, data: csr_matrix | NDArray, n_dimensions: int):
         reducer = TruncatedSVD(n_components=n_dimensions)
         embedding = reducer.fit(data)
+        return embedding
+    
+class PCA(_DimensionReduction):
+    def transform(
+        self, data: csr_matrix | NDArray, n_dimensions: int):
+        pca = sklearn.decomposition.PCA(n_components=n_dimensions) 
+        dim_redu = pca.fit_transform(data)  
+        return dim_redu
+
+class isomap(_DimensionReduction):
+    def transform(self,data,n_dimensions):
+        isomap = Isomap(n_components=n_dimensions)  
+        dim_redu = isomap.fit_transform(data) 
+        return dim_redu
+
+class umapEmbedding():
+    def transform(
+        self, data: csr_matrix | NDArray, n_dimensions: int):
+        umap_model = umap.umap_.UMAP(n_components=n_dimensions)
+        embedding = umap_model.fit_transform(data)
+        return embedding
+
+class GaussianRandomProjection(_DimensionReduction):
+    def transform(
+        self, data: csr_matrix | NDArray, n_dimensions: int):
+        reducer = random_projection.GaussianRandomProjection(n_components=n_dimensions)
+        embedding = reducer.fit_transform(data)
+        return embedding
+
+class SparseRandomProjection(_DimensionReduction):
+    def transform(
+        self, data: csr_matrix | NDArray, n_dimensions: int):
+        reducer = random_projection.SparseRandomProjection(n_components=n_dimensions)
+        embedding = reducer.fit_transform(data)
         return embedding
 
 class SimHash_Dimredu(_DimensionReduction):
@@ -106,23 +144,6 @@ class SimHash_Dimredu(_DimensionReduction):
         hash_table = self._get_hash_table(data.shape[1],n_dimensions,seed)
         simhash = (data @ hash_table).astype(np.uint8) 
         return simhash
-    
-
-class GaussianRandomProjection(_DimensionReduction):
-    def transform(
-        self, data: csr_matrix | NDArray, n_dimensions: int
-    ) -> NDArray:
-        reducer = random_projection.GaussianRandomProjection(n_components=n_dimensions)
-        embedding = reducer.fit_transform(data)
-        return embedding
-    
-class SparseRandomProjection(_DimensionReduction):
-    def transform(
-        self, data: csr_matrix | NDArray, n_dimensions: int
-    ) -> NDArray:
-        reducer = random_projection.SparseRandomProjection(n_components=n_dimensions)
-        embedding = reducer.fit_transform(data)
-        return embedding
 
 class scBiMapEmbedding(_DimensionReduction):
     """
@@ -135,7 +156,7 @@ class scBiMapEmbedding(_DimensionReduction):
         data: csr_matrix | NDArray,
         n_dimensions: int,
         *,
-        normalize=True,
+        normalize=True, 
     ) -> NDArray:
         if data.min() < 0:
             raise ValueError(
@@ -147,7 +168,7 @@ class scBiMapEmbedding(_DimensionReduction):
         y = (Dx @ csr_matrix(data.sum(axis=1))).T  # row vector
         Dy = sparse.diags(np.ravel((1 / (np.sqrt((y @ data).T.toarray()) + eps))))  # type: ignore
         C = np.sqrt(Dx) @ data @ Dy  # type: ignore
-        _, _, evec = np.linalg.svd( # type: ignore
+        _, _, evec = sparse.linalg.svds( # type: ignore
             C, k=n_dimensions, return_singular_vectors="vh", random_state=0
         )
         V = Dy @ evec.T  # eigenvectors for features

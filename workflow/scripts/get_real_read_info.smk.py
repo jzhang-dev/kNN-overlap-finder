@@ -17,8 +17,8 @@ def get_metadata(fasta_gz_file,paf_gz_file) -> pd.DataFrame:
     strands = []
     read_lengths = []
     start_positions = []
-    end_positions = []
-
+    end_positions = [] 
+    ## finding the alighnment query reads have max match base
     with gzip.open(paf_gz_file, "rt") as file:
         max_values = {}  
         for row in file:  
@@ -31,26 +31,25 @@ def get_metadata(fasta_gz_file,paf_gz_file) -> pd.DataFrame:
                     max_values[query_id] = columns
             else:  
                 continue
+    ## filter if the match base number < 50% of the reads length
     pass_reads = []
     with gzip.open(fasta_gz_file, "rt") as handle:
-        select_num,allseq_num,aligned_num,select_length,allseq_length,aligned_length = [0,0,0,0,0,0]
+        select_num,aligned_num,select_length,aligned_read_length = [0,0,0,0]
         for record in SeqIO.parse(handle, "fasta"):
-            allseq_num += 1
-            allseq_length += len(record.seq)
-            if record.id in max_values.keys():
-                aligned_num += 1
-                columns = max_values[record.id]
-                aligned_length += int(columns[1])
-                if int(columns[9])/int(columns[1]) > 0.5:
-                    pass_reads.append(">%s\n%s\n"%(record.id,record.seq))
-                    select_num += 1
-                    select_length += int(columns[1])
-                    read_sequences.append(record.seq)
-                    read_names.append(record.id)
-                    strands.append(columns[4])
-                    read_lengths.append(columns[1])
-                    start_positions.append(columns[7])
-                    end_positions.append(columns[8])
+            assert record.id not in read_names, f"{record.id} is a duplicate read, check fasta file to remove duplicate reads."
+            aligned_num += 1
+            columns = max_values[record.id]
+            aligned_read_length += int(columns[1])
+            if int(columns[9])/int(columns[1]) > 0.5:
+                pass_reads.append(">%s\n%s\n"%(record.id,record.seq))
+                select_num += 1
+                select_length += int(columns[1])
+                read_sequences.append(record.seq)                                                                                                                                                                                                                 
+                read_names.append(record.id)
+                strands.append(columns[4])
+                read_lengths.append(columns[1])
+                start_positions.append(columns[7])
+                end_positions.append(columns[8])
 
     metadata = pd.DataFrame(
         dict(
@@ -63,16 +62,12 @@ def get_metadata(fasta_gz_file,paf_gz_file) -> pd.DataFrame:
     )
     reads_stat = pd.DataFrame(
         dict(
-        allseq_num=allseq_num,
-        allseq_length=allseq_length,
         select_num=select_num,
         select_length=select_length,
         aligned_num=aligned_num,
-        aligned_length=aligned_length,
-        percentage_num_of_align=aligned_num/allseq_num,
-        percentage_len_of_align=aligned_length/allseq_length,
-        percentage_num_of_select=select_num/allseq_num,
-        percentage_len_of_select=select_length/allseq_length,
+        aligned_length=aligned_read_length,
+        percentage_num_of_select=select_num/aligned_num,
+        percentage_len_of_select=select_length/aligned_read_length,
         ),index=[0]
     ).T
     return metadata,reads_stat,pass_reads

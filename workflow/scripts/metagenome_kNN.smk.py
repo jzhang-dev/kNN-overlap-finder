@@ -26,6 +26,7 @@ from sklearn.neighbors import NearestNeighbors
 import numpy as np  
 from meta_nearest_neighbors import ExactNearestNeighbors,HNSW,NearestNeighborsConfig,compute_nearest_neighbors
 from metagenome_function import evaluate_meta
+from meta_str2config import parse_string_to_config
 
 output_ref_npz_file = snakemake.input['ref_feature_matrix']
 output_que_npz_file = snakemake.input['que_feature_matrix']
@@ -33,22 +34,24 @@ ref_read_tax_file = snakemake.input['ref_tax']
 que_read_tax_file = snakemake.input['que_tax']
 nbr_path = snakemake.output['nbr_indice']
 stat_path = snakemake.output['stat']
+time_path = snakemake.output['time']
 method = snakemake.wildcards['method']
 
 ref_feature_matrix= sp.load_npz(output_ref_npz_file)
 que_feature_matrix = sp.load_npz(output_que_npz_file)
 
-with open('workflow/notebooks/meta_config_dict.pkl', 'rb') as file:  
-    config_dict = pickle.load(file)
-
-config = config_dict[method]
+#config = config_dict[method]
+config = parse_string_to_config(method)
+print(config)
 
 neighbor_indices, elapsed_time, peak_memory = compute_nearest_neighbors(
     ref=ref_feature_matrix,
     que=que_feature_matrix,
     config=config,
-    n_neighbors=1)
+    n_neighbors=20)
 
+with open(time_path, 'w', encoding='utf-8') as f:
+    json.dump(elapsed_time, f, ensure_ascii=False)
 print(neighbor_indices)
 np.savez(nbr_path, neighbor_indices)
 
