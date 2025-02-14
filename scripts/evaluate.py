@@ -14,7 +14,6 @@ from dim_reduction import _DimensionReduction, SpectralEmbedding, scBiMapEmbeddi
 from graph import OverlapGraph, get_overlap_statistics
 from align import cWeightedSemiglobalAligner, run_multiprocess_alignment
 
-
 @dataclass
 class NearestNeighborsConfig:
     description: str = ""
@@ -48,6 +47,10 @@ class NearestNeighborsConfig:
                 print("TF-IDF transform.")
             _data = TfidfTransformer(use_idf=True, smooth_idf=True).fit_transform(_data)
             elapsed_time['tfidf'] = time.time() - start_time
+        elif self.tfidf == 'None':
+            _data[_data > 0] = 1
+        else:
+            raise ValueError('Invalid preprocess method.')
 
 
         if self.dimension_reduction_method is not None:

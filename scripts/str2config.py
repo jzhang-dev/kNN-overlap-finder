@@ -10,6 +10,7 @@ def parse_string_to_config(input_string: str) -> NearestNeighborsConfig:
     'HNSW':HNSW,
     'PQ':ProductQuantization,
     'NNDescent':NNDescent,
+    'MinHash':WeightedLowHash,
     'Euclidean':'euclidean',
     'Cosine':'cosine',
     'GaussianRP':GaussianRandomProjection,

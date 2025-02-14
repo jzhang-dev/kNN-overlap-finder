@@ -16,14 +16,15 @@ import numpy as np
 import pandas as pd
 import pysam
 import scipy as sp
-import seaborn
+import seaborn as sns
+import matplotlib.pyplot as plt
 import sharedmem
 
 sys.path.append("scripts")
 sys.path.append("../../scripts")
 
 from data_io import is_fwd_id, get_fwd_id, get_sibling_id
-from graph import OverlapGraph, GenomicInterval, get_overlap_statistics, remove_false_edges
+from graph import OverlapGraph, GenomicInterval, get_overlap_statistics, remove_false_edges,get_neighbor_overlap_bases,get_precision
 from truth import get_overlaps
 from evaluate import NearestNeighborsConfig, mp_compute_nearest_neighbors
 
@@ -41,7 +42,7 @@ json_path = snakemake.input['read_features']
 nbr_path = snakemake.input['nbr_indice']
 
 stat_path = snakemake.output['overlap']
-
+overlap_sizes_file= snakemake.output['neighbor_overlap_sizes']
 threads  = snakemake.threads
 
 print(sample, dataset, region)
@@ -88,9 +89,32 @@ for k in k_values:
     read_ids=read_ids,
     require_mutual_neighbors=False,)
     graph_stats = get_overlap_statistics(query_graph=graph, reference_graph=reference_graph)
-    stats = {"description": method, "n_neighbors": k, 
+    graph_per_rank =  OverlapGraph.from_neighbor_indices(
+    neighbor_indices=nbr_indices[:,k-1],
+    n_neighbors=1,
+    read_ids=read_ids,
+    require_mutual_neighbors=False,)
+    graph_stats_per_rank = get_precision(query_graph=graph_per_rank, reference_graph=reference_graph)
+    stats = {"description": method, "n_neighbors": k,
+                **graph_stats_per_rank,
                 **graph_stats}
     df_rows.append(stats)
+
+neighbor_overlap_sizes = get_neighbor_overlap_bases(graph,reference_graph,k_values[max_n_neighbors-2])
+with open(overlap_sizes_file, 'wb') as f:
+    pickle.dump(neighbor_overlap_sizes, f)
+
+# data = []
+# for i, sublist in enumerate(neighbor_overlap_sizes):
+#     for value in sublist:
+#         data.append({'Group': f'{i+1}', 'Value': value})
+# df = pd.DataFrame(data)
+# plt.figure(figsize=(8, 6),dpi=300)  # 设置图像大小
+# sns.boxplot(x='Group', y='Value', data=df)
+# plt.xlabel('Neighbor Rank')
+# plt.ylabel('Overlap Size')
+# plt.show()
+
 df = pd.DataFrame(df_rows)
 print(df)
 df['connected_fraction'] = 1 - df['singleton_fraction']

@@ -4,23 +4,28 @@ REFERENCE_FASTA_PATH = dict(
 REGIONS = dict(
     CHM13=dict(
         TRA=("chr14", 14819498, 17749884),
-        HLA=("chr6_MATERNAL", 28476949, 34231258),
+        HLA=("chr6", 28476949, 34231258),
         IGK=("chr2", 87866370, 91790947),
         IGH=("chr14", 98839469, 101161492),
         chr8_centro_6M=("chr8", 42_000_000, 48_000_000),
         chr5_centro_9M=("chr5", 44_000_000, 53_000_000),
         chr6_50M=("chr6", 0, 50_000_000),
         chr5_100M=("chr5", 0, 100_000_000),
-        chr1_248M=("chr1_MATERNAL", 0, 1_000_000_000),
+        chr1_248M=("chr1", 0, 1_000_000_000),
     ),
-    Ara=dict(
-        TRA=("chr14", 14819498, 17749884),
+    ara=dict(
+        chr1_30M=("1", 0, 100_000_000),
     ),
     rice=dict(
-        TRA=("chr14", 14819498, 17749884),
+        chr1_43M=("chr01", 0, 100_000_000),
     ),
     yeast=dict(
-        TRA=("chr14", 14819498, 17749884),
+        chr4_1M=("ref|NC_001136|", 0, 2_000_000),
+    ),
+    hg002=dict(
+        HLA=("chr6_MATERNAL", 28476949, 34231258),
+        IGK=("chr2_MATERNAL", 87866370, 91790947),
+        chr1_248M=("chr1_MATERNAL", 0, 1_000_000_000),
     ),
 )
 
@@ -218,25 +223,25 @@ rule get_pbsim_pb_ccs_metadata:
         "scripts/get_pbsim_read_info_hifi.smk.py"
 
 ## Kmer encoding for simulated reads.
-rule kmer_encoding_for_sim:
-    input:
-        fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
-        tsv="data/regional_reads/{sample}/{region}/{platform}/read_info.tsv.gz",
-    output:
-        npz="data/feature_matrix/{sample}/{region}/{platform}/kmer_k{k}/feature_matrix.npz",
-        json="data/feature_matrix/{sample}/{region}/{platform}/kmer_k{k}/read_features.json.gz",
-        tsv="data/feature_matrix/{sample}/{region}/{platform}/kmer_k{k}/metadata.tsv.gz",
-    params:
-        sample_fraction=0.05,
-        min_multiplicity=2,
-        seed=562104830,
-    wildcard_constraints:
-        k=r"\d+",
-        platform=r"pbsim_.+",
-    conda:
-        "envs/default.yaml"
-    script:
-        "scripts/kmer_encoding_for_sim.smk.py"
+# rule kmer_encoding_for_sim:
+#     input:
+#         fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
+#         tsv="data/regional_reads/{sample}/{region}/{platform}/read_info.tsv.gz",
+#     output:
+#         npz="data/feature_matrix/{sample}/{region}/{platform}/kmer_k{k}/feature_matrix.npz",
+#         json="data/feature_matrix/{sample}/{region}/{platform}/kmer_k{k}/read_features.json.gz",
+#         tsv="data/feature_matrix/{sample}/{region}/{platform}/kmer_k{k}/metadata.tsv.gz",
+#     params:
+#         sample_fraction=0.05,
+#         min_multiplicity=2,
+#         seed=562104830,
+#     wildcard_constraints:
+#         k=r"\d+",
+#         platform=r"pbsim_.+",
+#     conda:
+#         "envs/default.yaml"
+#     script:
+#         "scripts/kmer_encoding_for_sim.smk.py"
 
 # For real reads, get location on genome via minimap2.
 # These reads have sampled to 30x depth.
@@ -245,30 +250,24 @@ rule map_real_reads_to_genome:
         reads="data/real_reads/{sample}/{platform}/all_reads.fq.gz",
         reference="data/reference/{sample}/reference.fasta",
     output:
-        bam="data/real_reads/{sample}/{platform}/all_reads.bam",
-        bai="data/real_reads/{sample}/{platform}/all_reads.bai",
-        log="data/real_reads/{sample}/{platform}/minimap2.log",
+        all_paf="data/real_reads/{sample}/{platform}/all_aligned.paf",
     conda:
         "envs/minimap2.yaml"
     wildcard_constraints:
         platform=r"real.+",
     threads: 128
     shell:
-            """
-            /usr/bin/time -v -o {output.log} \
-            minimap2 -ax map-ont {input.reference} {input.reads} --secondary=no --MD \
-            --eqx -I 10G -k 19 -w 5 -A 3 -B 2 -m 250 -t {threads} \
-            | samtools sort -m 6G -o {output.bam}
-            samtools index {output.bam}
-            """
+        """
+        minimap2 -x map-ont {input.reference} {input.reads} --secondary=no --MD --eqx -I 10G -k 19 -w 5 -A 3 -B 2 -m 250 -t 60 > {output.all_paf}
+        """
 
-## Filter reads and save filtered reads in fasta file, finding reads' real location in genome and save it in tsv file.
-rule extract_alignment_info:
+rule extract_regional_alignment:
     input:
-        bam="data/real_reads/{sample}/{platform}/all_reads.bam",
+        reads="data/real_reads/{sample}/{platform}/all_reads.fq.gz",
+        all_paf="data/real_reads/{sample}/{platform}/all_aligned.paf",
     output:
-        tsv="data/regional_reads/{sample}/{region}/{platform}/read_info.tsv.gz",
-        fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
+        fasta_aligned="data/regional_reads/{sample}/{region}/{platform}/aligned_read.fa.gz",
+        paf="data/regional_reads/{sample}/{region}/{platform}/alignment.paf",
     params:
         chromosome=lambda wildcards: REGIONS[wildcards["sample"]][wildcards["region"]][0],
         start=lambda wildcards: REGIONS[wildcards["sample"]][wildcards["region"]][1],
@@ -276,7 +275,40 @@ rule extract_alignment_info:
     wildcard_constraints:
         platform=r"real.+",
     conda: "envs/default.yaml"
-    script: "scripts/extract_alignment_info.smk.py"
+    shell:
+        """
+        awk '$6 == "{params.chromosome}" && $8 < {params.end} && $9 > {params.start}' {input.all_paf} > {output.paf}
+        cut -f1 {output.paf} |sort  |uniq | seqkit grep -f - {input.reads} | seqkit fq2fa - | gzip > {output.fasta_aligned}
+        """
+
+rule paf_to_read_info:
+    input:
+        fasta_aligned="data/regional_reads/{sample}/{region}/{platform}/aligned_read.fa.gz",
+        paf="data/regional_reads/{sample}/{region}/{platform}/alignment.paf",
+    output:
+        tsv="data/regional_reads/{sample}/{region}/{platform}/read_info.tsv.gz",
+        stat="data/regional_reads/{sample}/{region}/{platform}/read_usage_statistic.tsv.gz",
+        fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
+    conda:
+        "envs/default.yaml"
+    script:
+        "scripts/get_real_read_info.smk.py"
+
+## Filter reads and save filtered reads in fasta file, finding reads' real location in genome and save it in tsv file.
+# rule extract_alignment_info:
+#     input:
+#         bam="data/real_reads/{sample}/{platform}/all_reads.bam",
+#     output:
+#         tsv="data/regional_reads/{sample}/{region}/{platform}/read_info.tsv.gz",
+#         fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
+#     params:
+#         chromosome=lambda wildcards: REGIONS[wildcards["sample"]][wildcards["region"]][0],
+#         start=lambda wildcards: REGIONS[wildcards["sample"]][wildcards["region"]][1],
+#         end=lambda wildcards: REGIONS[wildcards["sample"]][wildcards["region"]][2],
+#     wildcard_constraints:
+#         platform=r"real.+",
+#     conda: "envs/default.yaml"
+#     script: "scripts/extract_alignment_info.smk.py"
 
 
 ## Encode reads. This reads.fasta include fasta belong to this reigion, so this script fits for simulate and real reads.
@@ -284,6 +316,7 @@ rule kmer_encoding:
     input:
         fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
         tsv="data/regional_reads/{sample}/{region}/{platform}/read_info.tsv.gz",
+        #paf="data/regional_reads/{sample}/{region}/{platform}/alignment.paf.gz",
     output:
         npz="data/feature_matrix/{sample}/{region}/{platform}/kmer_k{k}/feature_matrix.npz",
         json="data/feature_matrix/{sample}/{region}/{platform}/kmer_k{k}/read_features.json.gz",
@@ -298,6 +331,8 @@ rule kmer_encoding:
         "envs/default.yaml"
     script:
         "scripts/kmer_encoding_for_sim.smk.py"
+
+
 
 #--------------------up for real data--------------------------------------------------------
 
@@ -363,7 +398,7 @@ rule get_neighbors:
     shell:
         """
         /usr/bin/time -v -o {output.log} \
-        python scripts/get_neighbors.smk.py {output.time} {input.paf_minimap2} {input.feature_matrix} \
+        python workflow/scripts/get_neighbors.smk.py {output.time} {input.paf_minimap2} {input.feature_matrix} \
         {input.metadata} {input.read_features} {output.nbr_indice} {wildcards.method}
         """
 
@@ -376,6 +411,7 @@ rule evaluate_configs:
         nbr_indice="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_nbr_matrix.npz",
     output:
         overlap="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_overlap_stat.tsv",
+        neighbor_overlap_sizes="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_overlap_sizes.pkl",
     threads: 8
     conda:
         "envs/evaluate.yaml"
@@ -441,14 +477,84 @@ rule real_data_test2:
 
 rule article_test:
     input:
-        expand("data/evaluation/CHM13/{region}/{platform}/kmer_k16/{demethod}_{distance}_{dimension}_{preprocess}_overlap_stat.tsv",
-        region=['IGK','HLA','chr1_248M'],
-        platform=['real_ONT_R9'],
+        expand("data/evaluation/yeast/chr4_1M/{platform}/kmer_k16/{demethod}_{distance}_{dimension}_{preprocess}_overlap_stat.tsv",
+        platform=['real_cyclone'],
+        demethod=['Exact'], 
+        distance=['Cosine','Euclidean'],
+        dimension=['None'], 
+        preprocess=['IDF','TF','TF-IDF','None'])
+
+rule article_test11:
+    input:
+        expand("data/evaluation/yeast/chr4_1M/{platform}/kmer_k16/{demethod}_{distance}_{dimension}_{preprocess}_overlap_stat.tsv",
+        platform=['real_cyclone'],
+        demethod=['Exact'], 
+        distance=['Cosine','Euclidean'],
+        dimension=['None'], 
+        preprocess=['IDF','TF','TF-IDF','None'])
+
+rule article_test10:
+    input:
+        expand("data/evaluation/{region}/kmer_k16/{demethod}_{distance}_{dimension}_{preprocess}_overlap_stat.tsv",
+        region=['rice/chr1_43M/real_ONT_new'],
         demethod=['Exact'], 
         distance=['Cosine','Euclidean'],
         dimension=['None'],
         preprocess=['IDF','TF','TF-IDF','None'])
- 
+
+
+rule article_test_d:
+    input:
+        expand("data/evaluation/{region}/kmer_k16/{demethod}_{distance}_{dimension}_{preprocess}_overlap_stat.tsv",
+        region=['CHM13/IGK/real_cyclone','CHM13/HLA/real_cyclone','CHM13/chr1_248M/real_cyclone','ara/chr1_30M/real_ONT','rice/chr1_43M/real_ONT_new','yeast/chr4_1M/real_cyclone'],
+        demethod=['HNSW'],
+        distance=['Cosine'],
+        dimension=['GaussianRP_500d','SparseRP_500d','umap_500d'],
+        preprocess=['IDF'])
+
+rule article_test_d4:
+    input:
+        expand("data/evaluation/{region}/kmer_k16/{demethod}_{distance}_{dimension}_{preprocess}_overlap_stat.tsv",
+        region=['CHM13/IGK/real_ONT','CHM13/HLA/real_ONT'], ##拟南芥无法运行成功
+        demethod=['HNSW','PQ','NNDescent'],
+        distance=['Cosine'],
+        dimension=['None'],
+        preprocess=['IDF'])
+
+rule article_test_d2:
+    input:
+        expand("data/evaluation/{region}/kmer_k16/{demethod}_{distance}_{dimension}_{preprocess}_overlap_stat.tsv",
+        region=['CHM13/IGK/real_cyclone','CHM13/HLA/real_cyclone','ara/chr1_30M/real_ONT','yeast/chr4_1M/real_cyclone'], ##拟南芥无法运行成功
+        demethod=['HNSW'],
+        distance=['Cosine'],
+        dimension=['Spectural_500d','PCA_500d','scBiMap_500d'],
+        preprocess=['IDF'])
+
+rule article_test_d3:
+    input:
+        expand("data/evaluation/{region}/kmer_k16/{demethod}_None_IDF_overlap_stat.tsv",
+        region=['ara/chr1_30M/real_ONT','rice/chr1_43M/real_ONT_new'],
+        demethod=['MinHash_Jaccard'])
+
+rule article_test_e_other:
+    input:
+        expand("data/evaluation/{region}/{platform}/kmer_k16/{demethod}_{distance}_{dimension}_{preprocess}_overlap_stat.tsv",
+        region=['CHM13/IGK','CHM13/HLA','CHM13/chr1_248M'],
+        platform=['real_ONT'],
+        demethod=['Exact'], 
+        distance=['Cosine','Euclidean'],
+        dimension=['None'], 
+        preprocess=['IDF','TF','TF-IDF','None'])
+
+rule article_test12:
+    input:
+        expand("data/evaluation/{region}/kmer_k16/{demethod}_{distance}_{dimension}_{preprocess}_overlap_stat.tsv",
+        region=['ara/chr1_30M/real_ONT','rice/chr1_43M/real_ONT_new'],
+        demethod=['HNSW'],
+        distance=['Cosine'],
+        dimension=['Spectural_500d','GaussianRP_500d','SparseRP_500d','umap_500d','PCA_500d','scBiMap_500d'],
+        preprocess=['IDF'])
+
 rule article_test2:
     input:
         expand("data/evaluation/{region}/{platform}/kmer_k16/{demethod}_{distance}_{dimension}_{preprocess}_overlap_stat.tsv",
@@ -495,23 +601,6 @@ rule article_test8:
         platform=['pbsim_ONT_93_30k'],
         demethod=['HNSW_Cosine','HNSW_Euclidean'])
 
-
-rule article_test4:
-    input:
-        expand("data/evaluation/{region}/{platform}/kmer_k16/{method}_{preprocess}_overlap_stat.tsv",
-        region=['CHM13/IGK','CHM13/HLA','yeast/chr10','TAIR/chr3'],
-        platform=['pbsim_ONT_93_30k','pbsim_ONT_95_20k','pbsim_ONT_98_10k','pbsim_ONT_93_20k','pbsim_ONT_93_10k',
-        'pbsim_ONT_95_30k','pbsim_ONT_95_10k','pbsim_ONT_98_20k','pbsim_ONT_98_30k'],
-        method=['Exact_Cosine_None','Exact_Euclidean_None','WeightedMinHash_Jaccard_None'],
-        preprocess=['IDF','TF','TF-IDF','None'])
-
-rule article_test5:
-    input:
-        expand("data/evaluation/{region}/{platform}/kmer_k16/{method}_overlap_stat.tsv",
-        region=['CHM13/IGK','CHM13/HLA','yeast/chr10','TAIR/chr3'],
-        platform=['pbsim_ONT_93_30k','pbsim_ONT_95_20k','pbsim_pb_hifi_10k','pbsim_ONT_93_20k','pbsim_ONT_93_10k',
-        'pbsim_ONT_95_30k','pbsim_ONT_95_10k','pbsim_ONT_98_20k','pbsim_ONT_98_30k'],
-        method=['Minimap2'])
  
 rule article_test_dimension:
     input:
@@ -520,47 +609,4 @@ rule article_test_dimension:
         platform=['pbsim_ONT_93_30k','pbsim_ONT_95_20k','pbsim_pb_hifi_10k'],
         method=[
             'Exact_Euclidean_None_IDF','Exact_Cosine_None_IDF','WeightedMinHash_Jaccard_None_IDF','Minimap2'
-        ])
-rule article_tair:
-    input:
-        expand("data/evaluation/TAIR/chr3/kmer_k16/{method}_overlap_stat.tsv",
-        platform=['pbsim_ONT_93_30k','pbsim_ONT_95_20k','pbsim_pb_hifi_10k'],
-        method=[
-            'WeightedMinHash_Jaccard_None_TF',
-            'WeightedMinHash_Jaccard_None_IDF',
-            'WeightedMinHash_Jaccard_None_TF-IDF ',
-            'MinHash_Jaccard_None_None',
-            'Exact_Euclidean_None_None',
-            'Exact_Euclidean_None_TF',
-            'Exact_Euclidean_None_IDF',
-            'Exact_Euclidean_None_TF-IDF',
-            'Exact_Cosine_None_None',
-            'Exact_Cosine_None_TF',
-            'Exact_Cosine_None_IDF',
-            'Exact_Cosine_None_TF-IDF',
-            'Minimap2',
-            'HNSW_Cosine_Spectural_500d_None',
-            'HNSW_Cosine_Spectural_500d_TF',
-            'HNSW_Cosine_Spectural_500d_IDF',
-            'HNSW_Cosine_Spectural_500d_TF-IDF',
-            'HNSW_Euclidean_Spectural_500d_None',
-            'HNSW_Euclidean_Spectural_500d_TF',
-            'HNSW_Euclidean_Spectural_500d_IDF',
-            'HNSW_Euclidean_Spectural_500d_TF-IDF',
-            'HNSW_Euclidean_GaussianRP_500d_None',
-            'HNSW_Euclidean_GaussianRP_500d_TF',
-            'HNSW_Euclidean_GaussianRP_500d_IDF',
-            'HNSW_Euclidean_GaussianRP_500d_TF-IDF',
-            'HNSW_Euclidean_SparseRP_500d_None',
-            'HNSW_Euclidean_SparseRP_500d_TF',
-            'HNSW_Euclidean_SparseRP_500d_TF-IDF',
-            'HNSW_Euclidean_SparseRP_500d_IDF',
-            'HNSW_Cosine_GaussianRP_500d_None',
-            'HNSW_Cosine_GaussianRP_500d_TF',
-            'HNSW_Cosine_GaussianRP_500d_IDF',
-            'HNSW_Cosine_GaussianRP_500d_TF-IDF',
-            'HNSW_Cosine_SparseRP_500d_None',
-            'HNSW_Cosine_SparseRP_500d_TF',
-            'HNSW_Cosine_SparseRP_500d_TF-IDF',
-            'HNSW_Cosine_SparseRP_500d_IDF',
         ])

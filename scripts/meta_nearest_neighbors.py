@@ -464,13 +464,18 @@ class NearestNeighborsConfig:
             if verbose:
                 print("IDF transform.")
             _data[_data > 0] = 1
-            _data = TfidfTransformer(use_idf=True, smooth_idf=True).fit_transform(_data)
+            transformer = TfidfTransformer(use_idf=True, smooth_idf=True)
+            ref_train = transformer.fit_transform(ref)
+            que_fit =  transformer.transform(que)
+            _data = sparse.vstack([ref_train,que_fit])
             elapsed_time['tfidf'] = time.time() - start_time
         elif self.tfidf == 'TF-IDF':
             start_time = time.time()
             if verbose:
                 print("TF-IDF transform.")
-            _data = TfidfTransformer(use_idf=True, smooth_idf=True).fit_transform(_data)
+            transformer = TfidfTransformer(use_idf=True, smooth_idf=True)
+            ref_train = transformer.fit_transform(ref)
+            que_fit =  transformer.transform(que)
             elapsed_time['tfidf'] = time.time() - start_time
 
 

@@ -29,7 +29,9 @@ from sklearn.neighbors import NearestNeighbors
 import numpy as np
 from itertools import chain 
 from collections import Counter
-from sklearn.metrics import precision_score, recall_score  
+from sklearn.metrics import precision_score, recall_score 
+from accelerate import open_gzipped
+
 
 def init_reverse_complement():
     TRANSLATION_TABLE = str.maketrans("ACTGactg", "TGACtgac")
@@ -53,7 +55,7 @@ def load_reads(fasta_path: str):
     read_names = []
     read_orientations = []
 
-    with open(fasta_path, "rt") as handle:  # Open gzipped file in text mode
+    with open_gzipped(fasta_path, "rt") as handle: 
         for record in SeqIO.parse(handle, "fasta"):
             seq = str(record.seq)
             read_sequences.append(seq)
@@ -80,10 +82,6 @@ def build_kmer_index(
         for p in range(len(seq) - k + 1):
             kmer = seq[p : p + k]
             kmer_counter[kmer] += 1
-
-    kmer_spectrum = collections.Counter(x for x in kmer_counter.values() if x <= 10)
-    print(kmer_spectrum)
-
     rng = np.random.default_rng(seed=seed)
     vocabulary = set(
         x

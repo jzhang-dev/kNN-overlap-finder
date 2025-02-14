@@ -88,6 +88,7 @@ kmer_indices = build_kmer_index(
         sample_fraction=sample_fraction,
         min_multiplicity=min_multiplicity,
         seed=seed)
+
 print("done\nloading query reads")
 qread_names, qread_orientations, qread_sequences = load_reads(query_reads)
 print("done\nbuilding feature matrix")

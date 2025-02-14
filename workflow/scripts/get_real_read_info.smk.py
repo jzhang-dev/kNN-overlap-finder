@@ -19,7 +19,7 @@ def get_metadata(fasta_gz_file,paf_gz_file) -> pd.DataFrame:
     start_positions = []
     end_positions = [] 
     ## finding the alighnment query reads have max match base
-    with gzip.open(paf_gz_file, "rt") as file:
+    with open(paf_gz_file, "rt") as file:
         max_values = {}  
         for row in file:  
             columns = row.strip().split('\t') 

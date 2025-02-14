@@ -1,26 +1,16 @@
-sys.path.append("scripts")
 
 import pickle, os, gzip, json, sys, itertools
 from pathlib import Path
 from importlib import reload
 from dataclasses import dataclass, field
-import collections
 import matplotlib.pyplot as plt
-import networkx as nx
 import numpy as np
 import pandas as pd
-import pysam
 import scipy as sp
-import seaborn
-import sharedmem
-from sklearn.decomposition import PCA
-
-from str2config import parse_string_to_config
-
 
 sys.path.append("scripts")
 sys.path.append("../../scripts")
-
+from str2config import parse_string_to_config
 from nearest_neighbors import (
     ExactNearestNeighbors,
     PAFNearestNeighbors

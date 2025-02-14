@@ -36,16 +36,16 @@ def get_overlap_candidates(
     n_neighbors: int,
     read_ids: Sequence[int],
 ):
-    if neighbor_indices.shape[1] < n_neighbors:
-        raise ValueError("Not enough neighbors in `neighbor_indices`.")
+    # if neighbor_indices.shape[1] < n_neighbors:
+    #     raise ValueError("Not enough neighbors in `neighbor_indices`.")
     _read_ids = np.array(read_ids)
     overlap_candidates = []
 
     for i1, row in enumerate(neighbor_indices):
         k1 = _read_ids[i1]
         row = row[(row >= 0) & (row != i1)]
-        overlap_candidates += [(k1, _read_ids[i2]) for i2 in row[:n_neighbors]]
-
+        for neighbor_order, i2 in enumerate(row[:n_neighbors]):
+            overlap_candidates.append((k1, _read_ids[i2], {"neighbor_order": neighbor_order}))
     return overlap_candidates
 
 
@@ -54,15 +54,15 @@ class OverlapGraph(nx.Graph):
     @classmethod
     def from_overlap_candidates(
         cls,
-        candidates: Collection[tuple[int, int]],
+        candidates: Collection[tuple[int, int, dict]],
         require_mutual_neighbors: bool = False,
     ):
         if require_mutual_neighbors:
-            candidates = set(candidates)
+            candidates = set((k1, k2, data) for k1, k2, data in candidates)
             removed = set()
-            for k1, k2 in candidates:
-                if (k2, k1) not in candidates:
-                    removed.add((k1, k2))
+            for k1, k2, data in candidates:
+                if (k2, k1, data) not in candidates:
+                    removed.add((k1, k2, data))
             candidates -= removed
 
         read_graph = cls()
@@ -233,6 +233,34 @@ def remove_false_edges(graph, reference_graph):
     graph.remove_edges_from(false_edges)
 
 
+
+def get_neighbor_overlap_bases(query_graph: nx.Graph, reference_graph: nx.Graph,neighbor):
+    neighbor_overlap_sizes = [[] for _ in range(neighbor)]
+    for node_0 in query_graph.nodes():
+        for node_1, data in query_graph[node_0].items():  
+            if reference_graph.has_edge(node_0, node_1):
+                edge_data = reference_graph.get_edge_data(node_0, node_1)
+                overlap_size = edge_data["overlap_size"]
+                neighbor_overlap_sizes[data['neighbor_order']].append(overlap_size)
+            else:
+                neighbor_overlap_sizes[data['neighbor_order']].append(0)
+    return neighbor_overlap_sizes
+    
+def get_precision(query_graph: nx.Graph, reference_graph: nx.Graph):
+    reference_edges = set(
+        tuple(sorted((node_1, node_2))) for node_1, node_2 in reference_graph.edges
+    )
+    query_edges = set(
+        tuple(sorted((read_1, read_2))) for read_1, read_2 in query_graph.edges
+    )
+    true_positive_edges = query_edges & reference_edges
+    precision = len(true_positive_edges) / len(query_edges)
+    result = dict(
+        precision_per_rank=precision,
+    )
+    return result
+
+
 def get_overlap_statistics(query_graph: nx.Graph, reference_graph: nx.Graph):
     reference_edges = set(
         tuple(sorted((node_1, node_2))) for node_1, node_2 in reference_graph.edges
@@ -271,11 +299,8 @@ def get_overlap_statistics(query_graph: nx.Graph, reference_graph: nx.Graph):
         nr_recall=nr_recall,
         singleton_count=singleton_count,
         singleton_fraction=singleton_fraction,
+        component_sizes=len(component_sizes),
         N50=N50,
         continuity=continuity,
-        nr_true_positive_edges=len(nr_true_positive_edges),
-        nr_reference_edges=len(nr_reference_edges),
-        true_positive_edges=len(true_positive_edges),
-        reference_edges=len(reference_edges)
     )
     return result
