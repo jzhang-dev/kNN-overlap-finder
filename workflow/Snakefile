@@ -1,5 +1,6 @@
 REFERENCE_FASTA_PATH = dict(
     CHM13="/home/miaocj/docker_dir/data/reference_genome/CHM13/chm13v2.0.fa.gz",
+    rice="/home/miaocj/docker_dir/kNN-overlap-finder/data/reference/rice/IRGSP.fasta.gz",
 )
 REGIONS = dict(
     CHM13=dict(
@@ -12,6 +13,12 @@ REGIONS = dict(
         chr6_50M=("chr6", 0, 50_000_000),
         chr5_100M=("chr5", 0, 100_000_000),
         chr1_248M=("chr1", 0, 1_000_000_000),
+        chr22_51M=("chr22", 0, 100_000_000),
+        chr9_150M=("chr9", 0, 1_000_000_000),
+        chr13_113M=("chr13", 0, 1_000_000_000),
+        chr14_101M=("chr14", 0, 1_000_000_000),
+        chr15_98M=("chr15", 0, 1_000_000_000),
+        chr21_45M=("chr21", 0, 1_000_000_000)
     ),
     ara=dict(
         chr1_30M=("1", 0, 100_000_000),
@@ -43,7 +50,7 @@ rule extract_regional_reference:
     output:
         fasta="data/regional_reference/{sample}/{region}/reference.fasta.gz",
     params:
-        region=lambda wildcards: REGIONS[wildcards["region"]],
+        region=lambda wildcards: REGIONS[wildcards["sample"]][wildcards["region"]],
     conda:
         "envs/default.yaml"
     script:
@@ -73,19 +80,19 @@ rule run_pbsim3_ont:
         model="resources/pbsim/ERRHMM-ONT-HQ.model",
     output:
         folder=directory(
-            "data/regional_reads/{sample}/{region}/pbsim_ONT_{accuracy}_{length_kb}k"
+            "data/regional_reads/{sample}/{region}/pbsim_ONT_{accuracy}_{length_kb}k_{depth}dep"
         ),
-        fasta="data/regional_reads/{sample}/{region}/pbsim_ONT_{accuracy}_{length_kb}k/reads.fasta.gz",
-        maf="data/regional_reads/{sample}/{region}/pbsim_ONT_{accuracy}_{length_kb}k/alignment.maf.gz",
+        fasta="data/regional_reads/{sample}/{region}/pbsim_ONT_{accuracy}_{length_kb}k_{depth}dep/reads.fasta.gz",
+        maf="data/regional_reads/{sample}/{region}/pbsim_ONT_{accuracy}_{length_kb}k_{depth}dep/alignment.maf.gz",
     wildcard_constraints:
         accuracy=r"\d+",
         length_kb=r"\d+",
+        depth=r"\d+",
     params:
         accuracy=lambda wildcards: float(wildcards["accuracy"]) / 100,
         length_mean=lambda wildcards: int(wildcards["length_kb"]) * 1000,
         length_sd=lambda wildcards: int(wildcards["length_kb"]) * 500,
-        length_min=10_000,
-        depth=20,
+        length_min=1000,
         seed=5023967,
     conda:
         "envs/pbsim.yaml"
@@ -96,7 +103,7 @@ rule run_pbsim3_ont:
             --strategy wgs \
             --method errhmm \
             --errhmm {input.model} \
-            --depth {params.depth} \
+            --depth {wildcards.depth} \
             --accuracy-mean {params.accuracy} \
             --length-mean {params.length_mean} \
             --length-sd  {params.length_sd} \
@@ -222,29 +229,9 @@ rule get_pbsim_pb_ccs_metadata:
     script:
         "scripts/get_pbsim_read_info_hifi.smk.py"
 
-## Kmer encoding for simulated reads.
-# rule kmer_encoding_for_sim:
-#     input:
-#         fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
-#         tsv="data/regional_reads/{sample}/{region}/{platform}/read_info.tsv.gz",
-#     output:
-#         npz="data/feature_matrix/{sample}/{region}/{platform}/kmer_k{k}/feature_matrix.npz",
-#         json="data/feature_matrix/{sample}/{region}/{platform}/kmer_k{k}/read_features.json.gz",
-#         tsv="data/feature_matrix/{sample}/{region}/{platform}/kmer_k{k}/metadata.tsv.gz",
-#     params:
-#         sample_fraction=0.05,
-#         min_multiplicity=2,
-#         seed=562104830,
-#     wildcard_constraints:
-#         k=r"\d+",
-#         platform=r"pbsim_.+",
-#     conda:
-#         "envs/default.yaml"
-#     script:
-#         "scripts/kmer_encoding_for_sim.smk.py"
-
 # For real reads, get location on genome via minimap2.
 # These reads have sampled to 30x depth.
+
 rule map_real_reads_to_genome:
     input:
         reads="data/real_reads/{sample}/{platform}/all_reads.fq.gz",
@@ -274,6 +261,7 @@ rule extract_regional_alignment:
         end=lambda wildcards: REGIONS[wildcards["sample"]][wildcards["region"]][2],
     wildcard_constraints:
         platform=r"real.+",
+        region=r"^(?!all$).*$",
     conda: "envs/default.yaml"
     shell:
         """
@@ -281,6 +269,21 @@ rule extract_regional_alignment:
         cut -f1 {output.paf} |sort  |uniq | seqkit grep -f - {input.reads} | seqkit fq2fa - | gzip > {output.fasta_aligned}
         """
 
+rule extract_all_alignment:
+    input:
+        reads="data/real_reads/{sample}/{platform}/all_reads.fq.gz",
+        all_paf="data/real_reads/{sample}/{platform}/all_aligned.paf",
+    output:
+        fasta_aligned="data/regional_reads/{sample}/all/{platform}/aligned_read.fa.gz",
+    wildcard_constraints:
+        platform=r"real.+",
+    conda: "envs/default.yaml"
+    shell:
+        """
+        cut -f1 {input.all_paf} |sort  |uniq | seqkit grep -f - {input.reads} | seqkit fq2fa - | gzip > {output.fasta_aligned}
+        """
+
+## Filter reads and save filtered reads in fasta file, finding reads' real location in genome and save it in tsv file.
 rule paf_to_read_info:
     input:
         fasta_aligned="data/regional_reads/{sample}/{region}/{platform}/aligned_read.fa.gz",
@@ -289,27 +292,28 @@ rule paf_to_read_info:
         tsv="data/regional_reads/{sample}/{region}/{platform}/read_info.tsv.gz",
         stat="data/regional_reads/{sample}/{region}/{platform}/read_usage_statistic.tsv.gz",
         fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
+    wildcard_constraints:
+        region=r"^(?!all$).*$",
+        platform=r"real.+",
     conda:
         "envs/default.yaml"
     script:
         "scripts/get_real_read_info.smk.py"
 
-## Filter reads and save filtered reads in fasta file, finding reads' real location in genome and save it in tsv file.
-# rule extract_alignment_info:
-#     input:
-#         bam="data/real_reads/{sample}/{platform}/all_reads.bam",
-#     output:
-#         tsv="data/regional_reads/{sample}/{region}/{platform}/read_info.tsv.gz",
-#         fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
-#     params:
-#         chromosome=lambda wildcards: REGIONS[wildcards["sample"]][wildcards["region"]][0],
-#         start=lambda wildcards: REGIONS[wildcards["sample"]][wildcards["region"]][1],
-#         end=lambda wildcards: REGIONS[wildcards["sample"]][wildcards["region"]][2],
-#     wildcard_constraints:
-#         platform=r"real.+",
-#     conda: "envs/default.yaml"
-#     script: "scripts/extract_alignment_info.smk.py"
-
+rule paf_to_read_info_for_chrs:
+    input:
+        fasta_aligned="data/regional_reads/{sample}/all/{platform}/aligned_read.fa.gz",
+        paf="data/real_reads/{sample}/{platform}/all_aligned.paf",
+    output:
+        tsv="data/regional_reads/{sample}/all/{platform}/read_info.tsv.gz",
+        stat="data/regional_reads/{sample}/all/{platform}/read_usage_statistic.tsv.gz",
+        fasta="data/regional_reads/{sample}/all/{platform}/reads.fasta.gz",
+    wildcard_constraints:
+        platform=r"real.+",
+    conda:
+        "envs/default.yaml"
+    script:
+        "scripts/get_real_read_info_for_chrs.smk.py"
 
 ## Encode reads. This reads.fasta include fasta belong to this reigion, so this script fits for simulate and real reads.
 rule kmer_encoding:
@@ -332,7 +336,33 @@ rule kmer_encoding:
     script:
         "scripts/kmer_encoding_for_sim.smk.py"
 
+rule minimizer_encoding:
+    input:
+        fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
+        tsv="data/regional_reads/{sample}/{region}/{platform}/read_info.tsv.gz",
+    output:
+        npz="data/feature_matrix/{sample}/{region}/{platform}/minimizer_k{k}_w{w}/feature_matrix.npz",
+        json="data/feature_matrix/{sample}/{region}/{platform}/minimizer_k{k}_w{w}/read_features.json.gz",
+        tsv="data/feature_matrix/{sample}/{region}/{platform}/minimizer_k{k}_w{w}/metadata.tsv.gz",
+    params:
+        min_multiplicity=2, ## 区别于kmer编码，指的是包含某kmer数量的reads数目小于2
+        seed=562104830,
+    wildcard_constraints:
+        k=r"\d+",
+    conda:
+        "envs/default.yaml"
+    script:
+        "scripts/minimizer_encoding.smk.py"
 
+rule generate_reference_graph:
+    input:
+        metadata="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/metadata.tsv.gz",
+    output:
+        ref_graph="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/reference_graph.gpickle",
+    conda:
+        "envs/default.yaml"
+    script:
+        "scripts/generate_reference_graph.smk.py"
 
 #--------------------up for real data--------------------------------------------------------
 
@@ -341,15 +371,15 @@ rule run_minimap2_ava:
         fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
     output:
         paf_minimap2="data/minimap2/{sample}/{region}/{platform}/alignment.paf.gz",
+        minimap2_log="data/minimap2/{sample}/{region}/{platform}/minimap2.log",
     params:
         preset="ava-ont",
-    benchmark:
-        "data/evaluation/minimap2/{sample}/{region}/{platform}/minimap2_benchmark.csv"
     conda:
         "envs/minimap2.yaml"
-    threads: 120
+    threads: 64
     shell:
         """
+        /usr/bin/time -v -o {output.minimap2_log} \
         minimap2 -x {params.preset} -t {threads} {input.fasta} {input.fasta}| gzip -c > {output.paf_minimap2}
         """
 
@@ -385,228 +415,290 @@ rule get_neighbors:
         read_features="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/read_features.json.gz",
         metadata="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/metadata.tsv.gz",
         paf_minimap2="data/minimap2/{sample}/{region}/{platform}/alignment.paf.gz",
-        #paf_blend="data/blend/{sample}/{region}/{platform}/alignment.paf.gz",
     output:
-        nbr_indice="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_nbr_matrix.npz",
-        time="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_nn_time.tsv",
-        log="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_time.log"
-    benchmark:
-        "data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_benchmark.csv"
+        nbr_indice="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{method}_nbr_matrix.npz",
+        time="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{method}_nn_time.json",
+        log="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{method}_time.log",
     threads: 1
+    wildcard_constraints:
+        method=r'[A-Za-z]+_[A-Za-z]+_[A-Za-z]+_(\d+d_)?(IDF|TF|TF-IDF|None)+',
     conda:
         "envs/evaluate.yaml"
     shell:
         """
         /usr/bin/time -v -o {output.log} \
-        python workflow/scripts/get_neighbors.smk.py {output.time} {input.paf_minimap2} {input.feature_matrix} \
+        mprof run workflow/scripts/get_neighbors.smk.py {output.time} {input.paf_minimap2} {input.feature_matrix} \
         {input.metadata} {input.read_features} {output.nbr_indice} {wildcards.method}
+        mprof plot -o {output.time}.png
         """
 
+rule get_neighbors_params_tuning:
+    input:
+        feature_matrix="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/feature_matrix.npz",
+        read_features="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/read_features.json.gz",
+        metadata="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/metadata.tsv.gz",
+        paf_minimap2="data/minimap2/{sample}/{region}/{platform}/alignment.paf.gz",
+        params="data/configs/{config}_parameter.json"
+        #paf_blend="data/blend/{sample}/{region}/{platform}/alignment.paf.gz",
+    output:
+        nbr_indice="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{config}/{method}_nbr_matrix.npz",
+        time="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{config}/{method}_nn_time.json",
+        log="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{config}/{method}_time.log",
+    threads: 1
+    wildcard_constraints:
+        method=r'[A-Za-z]+_[A-Za-z]+_[A-Za-z]+_(\d+d_)?(IDF|TF|TF-IDF|None)+',
+    conda:
+        "envs/evaluate.yaml"
+    shell:
+        """
+        /usr/bin/time -v -o {output.log} \
+        mprof run workflow/scripts/get_neighbors.smk.py {output.time} {input.paf_minimap2} {input.feature_matrix} \
+        {input.metadata} {input.read_features} {output.nbr_indice} {wildcards.method} {input.params}
+        mprof plot -o {output.time}.png
+        """
+rule get_neighbors_diff_n_neighbors:
+    input:
+        feature_matrix="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/feature_matrix.npz",
+        read_features="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/read_features.json.gz",
+        metadata="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/metadata.tsv.gz",
+        paf_minimap2="data/minimap2/{sample}/{region}/{platform}/alignment.paf.gz",
+    output:
+        nbr_indice="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{method}_n{n_neighbors}_nbr_matrix.npz",
+        time="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{method}_n{n_neighbors}_nn_time.json",
+        log="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{method}_n{n_neighbors}_time.log",
+    threads: 1
+    wildcard_constraints:
+        method=r'[A-Za-z]+_[A-Za-z]+_[A-Za-z]+_(\d+d_)?(IDF|TF|TF-IDF|None)+',
+    conda:
+        "envs/evaluate.yaml"
+    shell:
+        """
+        /usr/bin/time -v -o {output.log} \
+        mprof run workflow/scripts/get_neighbors_different_n.smk.py {output.time} {input.paf_minimap2} {input.feature_matrix} \
+        {input.metadata} {input.read_features} {output.nbr_indice} {wildcards.method} {wildcards.n_neighbors}
+        mprof plot -o {output.time}.png
+        """
 
 rule evaluate_configs:
     input:
         feature_matrix="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/feature_matrix.npz",
         read_features="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/read_features.json.gz",
         metadata="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/metadata.tsv.gz",
-        nbr_indice="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_nbr_matrix.npz",
+        ref_graph="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/reference_graph.gpickle",
+        nbr_indice="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{method}_nbr_matrix.npz",
     output:
-        overlap="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_overlap_stat.tsv",
-        neighbor_overlap_sizes="data/evaluation/{sample}/{region}/{platform}/{encoding}/{method}_overlap_sizes.pkl",
+        neighbor_overlap_sizes="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{method}_overlap_sizes.pkl",
     threads: 8
+    wildcard_constraints:
+        method=r'[^/]+',
     conda:
         "envs/evaluate.yaml"
     script:
         "scripts/evaluate_neighbors.smk.py" 
 
-rule get_neighbors_meta:
+use rule evaluate_configs as evaluate_configs_params_tuning with:
     input:
-        ref_tax="data/feature_matrix/metagenome/{data_type}/{platform}/{encoding}/ref_read_tax.json.gz",
-        que_tax="data/feature_matrix/metagenome/{data_type}/{platform}/{encoding}/que_read_tax.json.gz",
-        ref_feature_matrix="data/feature_matrix/metagenome/{data_type}/{platform}/{encoding}/ref_feature_matrix.npz",
-        que_feature_matrix="data/feature_matrix/metagenome/{data_type}/{platform}/{encoding}/que_feature_matrix.npz",
+        feature_matrix="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/feature_matrix.npz",
+        read_features="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/read_features.json.gz",
+        metadata="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/metadata.tsv.gz",
+        ref_graph="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/reference_graph.gpickle",
+        nbr_indice="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{config}/{method}_nbr_matrix.npz",
     output:
-        nbr_indice="data/evaluation/metagenome/{data_type}/{platform}/{encoding}/{method}_nbr_matrix.npz",
-        stat="data/evaluation/metagenome/{data_type}/{platform}/{encoding}/{method}_stat.tsv",
-        time="data/evaluation/metagenome/{data_type}/{platform}/{encoding}/{method}_nn_time.tsv"
-    threads: 8
-    benchmark:
-        "data/evaluation/metagenome/{data_type}/{platform}/{encoding}/{method}_benchmark.csv"
-    conda:
-        "envs/evaluate.yaml"
-    script:
-        "scripts/metagenome_kNN.smk.py"
+        neighbor_overlap_sizes="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{config}/{method}_overlap_sizes.pkl",
+
+rule get_stat:
+    input:
+        neighbor_overlap_sizes="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{method}_overlap_sizes.pkl",
+        log="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{method}_time.log",
+    output:
+        stat="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{method}_integral_stat.tsv",
+        time_stat="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{method}_time_rss.tsv",
+    shell:
+        """
+        python /home/miaocj/docker_dir/kNN-overlap-finder/workflow/scripts/generate_evalutate.py {input.neighbor_overlap_sizes} {output.stat}
+        python /home/miaocj/docker_dir/kNN-overlap-finder/workflow/scripts/generate_time_stat.py {input.log} {output.time_stat}
+        """
+
+# rule get_neighbors_meta:
+#     input:
+#         ref_tax="data/feature_matrix/metagenome/{data_type}/{platform}/{encoding}/ref_read_tax.json.gz",
+#         que_tax="data/feature_matrix/metagenome/{data_type}/{platform}/{encoding}/que_read_tax.json.gz",
+#         ref_feature_matrix="data/feature_matrix/metagenome/{data_type}/{platform}/{encoding}/ref_feature_matrix.npz",
+#         que_feature_matrix="data/feature_matrix/metagenome/{data_type}/{platform}/{encoding}/que_feature_matrix.npz",
+#     output:
+#         nbr_indice="data/evaluation/metagenome/{data_type}/{platform}/{encoding}/{method}_nbr_matrix.npz",
+#         stat="data/evaluation/metagenome/{data_type}/{platform}/{encoding}/{method}_stat.tsv",
+#         time="data/evaluation/metagenome/{data_type}/{platform}/{encoding}/{method}_nn_time.json"
+#     threads: 8
+#     benchmark:
+#         "data/evaluation/metagenome/{data_type}/{platform}/{encoding}/{method}_benchmark.csv"
+#     conda:
+#         "envs/evaluate.yaml"
+#     script:
+#         "scripts/metagenome_kNN.smk.py"
 
 # ----------------------------------------------------------------------------------------------------
+rule test_minimizer_small_region:
+    input:
+        expand("data/evaluation64/CHM13/{region}/real_cyclone/{encode}/Exact_Cosine_None_TF-IDF_integral_stat.tsv",
+        encode=['minimizer_k11_w10','minimizer_k11_w20','minimizer_k11_w10'],
+        region=['HLA','IGK','chr22_51M'])
 
-rule meta1:
+rule test_minimizer_chr1:
     input:
-        expand("data/evaluation/metagenome/GCR_part001/pbsim_ONT_95_20k/kmer_16/{method}_stat.tsv",
-        method=['SimHash_Hamming_None_IDF','HNSW_Cosine_GaussianRP_500d_IDF'])
+        expand("data/evaluation64/CHM13/chr1_248M/real_cyclone/{encode}/NNDescent_Cosine_SparseRP_3000d_IDF_integral_stat.tsv",
+        encode=['minimizer_k11_w10','minimizer_k11_w20','minimizer_k11_w10','minimizer_k15_w10'])
 
-rule real_data_test6:
+rule test_k:
     input:
-        expand("data/evaluation/CHM13/{region}/{platform}/kmer_k16/{method}_None_overlap_stat.tsv",
-        region=['IGK','HLA','chr1'],
-        platform=['cyclone','ONT_R9'],
-        method=['Exact_Cosine_None','HNSW_Euclidean_GaussianRP_500d','SimHash_Hamming_None','MinHash_Jaccard_None',
-        'HNSW_Cosine_GaussianRP_500d','HNSW_Cosine_SparseRP_500d','HNSW_Euclidean_SparseRP_500d'])
+        expand("data/evaluation64/CHM13/{region}/real_cyclone/kmer_k{k}/Exact_Cosine_None_TF-IDF_integral_stat.tsv",
+        region=['chr1_248M'],
+        k=[5,7,9,11,13,15,17])
 
-rule real_data_test:
+rule test_n1:
     input:
-        expand("data/evaluation/human/{region}/{platform}/kmer_k16/{method}_IDF_overlap_stat.tsv",
-        region=['IGK','HLA','chr22'],
-        platform=['cyclone','ONT_R9'],
-        method=['Exact_Cosine_None','HNSW_Euclidean_GaussianRP_500d','SimHash_Hamming_None','MinHash_Jaccard_None',
-        'HNSW_Cosine_GaussianRP_500d','HNSW_Cosine_SparseRP_500d','HNSW_Euclidean_SparseRP_500d'])
+        expand("data/evaluation64/CHM13/chr1_248M/real_cyclone/kmer_k16/NNDescent_Cosine_SparseRP_3000d_IDF_n{n_neighbors}_nn_time.json",
+        n_neighbors=[2,6,10,14,16])
 
-rule real_data_test1:
-    input:
-        expand("data/evaluation/human/{region}/cyclone/kmer_k16/{method}_IDF_overlap_stat.tsv",
-        region=['IGK'],
-        method=['Exact_Cosine_None','HNSW_Euclidean_GuassianRP_500d','SimHash_Hamming_None','MinHash_Jaccard_None'])
-rule real_data_test3:
-    input:
-        expand("data/evaluation/human/{region}/ONT_R9/kmer_k16/{method}_overlap_stat.tsv",
-        region=['IGK','HLA','chr22'],
-        method=['Minimap2'])
 
-rule real_data_test2:
+rule PQ_PT2:
     input:
-        expand("data/evaluation/human/chr1/cyclone/kmer_k16/{method}_IDF_overlap_stat.tsv",
-        method=['HNSW_Euclidean_GaussianRP_500d','HNSW_Cosine_SparseRP_500d','HNSW_Euclidean_SparseRP_500d','HNSW_Cosine_GaussianRP_500d'])
+        expand("data/evaluation64/CHM13/chr1_248M/real_cyclone/kmer_k16/{config}/PQ_Cosine_SparseRP_3000d_IDF_stat.tsv",
+        config=['PQ_config1','PQ_config2','PQ_config3','PQ_config4','PQ_config5','PQ_default'])
 
-rule article_test:
+rule HNSW_PT3:
     input:
-        expand("data/evaluation/yeast/chr4_1M/{platform}/kmer_k16/{demethod}_{distance}_{dimension}_{preprocess}_overlap_stat.tsv",
-        platform=['real_cyclone'],
-        demethod=['Exact'], 
+        expand("data/evaluation64/CHM13/chr1_248M/real_cyclone/kmer_k16/{config}/HNSW_Cosine_SparseRP_3000d_IDF_nn_time.json",
+        config=['HNSW_config1','HNSW_config2','HNSW_config3','HNSW_config4','HNSW_config5','HNSW_default'])
+
+rule NNDesent_PT4:
+    input:
+        expand("data/evaluation64/CHM13/chr1_248M/real_cyclone/kmer_k16/{config}/NNDescent_Cosine_SparseRP_3000d_IDF_stat.tsv",
+        config=['NNDesent_config1','NNDesent_config2','NNDesent_config3','NNDesent_config4','NNDesent_config5','NNDesent_default'])
+
+rule IVFPQ_PT5:
+    input:
+        expand("data/evaluation64/CHM13/chr1_248M/real_cyclone/kmer_k16/{config}/IVFPQ_Cosine_SparseRP_3000d_IDF_nn_time.json",
+        config=['IVFPQ_config1','IVFPQ_config2','IVFPQ_config3','IVFPQ_config4','IVFPQ_config5','IVFPQ_default'])
+
+rule chrs_test:
+    input:
+        expand("data/evaluation64/CHM13/{chromosome}/real_cyclone/kmer_k11/NNDescent_Cosine_SparseRP_{dim}d_IDF_n6_integral_stat.tsv",
+        chromosome=['chr9_150M','chr13_113M','chr14_101M','chr15_98M','chr21_45M','chr22_51M','chr1_248M'],
+        dim=[500,1000,2000,3000,6000])
+
+rule small_region:
+    input:
+        expand("data/evaluation/{region}/kmer_k16/Exact_Cosine_{dim}_500d_IDF_overlap_stat.tsv",
+        region=['CHM13/IGK/real_cyclone','CHM13/HLA/real_cyclone',
+        'CHM13/IGK/real_ONT','CHM13/HLA/real_ONT','yeast/chr4_1M/real_cyclone'],
+        dim=['Spectural','GaussianRP','SparseRP','umap','PCA','scBiMap'])
+
+rule small_region_ANN:
+    input:
+        expand("data/evaluation64/{region}/kmer_k16/{ann}_Cosine_SparseRP_2000d_IDF_nn_time.json",
+        region=['CHM13/IGK/real_cyclone','CHM13/HLA/real_cyclone',
+        'CHM13/IGK/real_ONT','CHM13/HLA/real_ONT'],
+        ann=['HNSW','PQ','IVFPQ','NNDescent'])
+rule large_region_ANN:
+    input:
+        expand("data/evaluation64/{region}/kmer_k16/{ann}_Cosine_SparseRP_2000d_IDF_nn_time.json",
+        region=['CHM13/IGK/real_cyclone','CHM13/HLA/real_cyclone',
+        'CHM13/IGK/real_ONT','CHM13/HLA/real_ONT'],
+        ann=['HNSW','PQ','IVFPQ','NNDescent'])
+
+
+rule HLA_dim:
+    input:
+        expand("data/evaluation/CHM13/HLA/real_cyclone/kmer_k16/Exact_Cosine_SparseRP_{dim}d_IDF_overlap_stat.tsv",
+        dim=[100,300,500,1000,2000,3000,6000])
+
+rule chr22_dims:
+    input:
+        expand("data/evaluation/{region}/kmer_k16/Exact_{distance}_{dim_method}RP_500d_IDF_overlap_stat.tsv",
+        region=['CHM13/HLA/real_cyclone','CHM13/IGK/real_cyclone','CHM13/chr22_51M/real_cyclone',
+            'CHM13/HLA/real_ONT','CHM13/IGK/real_ONT','CHM13/chr22_51M/real_ONT',
+            'ara/chr1_30M/real_ONT','rice/chr1_43M/real_ONT_new'],
         distance=['Cosine','Euclidean'],
-        dimension=['None'], 
-        preprocess=['IDF','TF','TF-IDF','None'])
+        dim_method=['Gaussian','Sparse'])
 
-rule article_test11:
+
+rule middle_region_hash:
     input:
-        expand("data/evaluation/yeast/chr4_1M/{platform}/kmer_k16/{demethod}_{distance}_{dimension}_{preprocess}_overlap_stat.tsv",
-        platform=['real_cyclone'],
-        demethod=['Exact'], 
-        distance=['Cosine','Euclidean'],
-        dimension=['None'], 
-        preprocess=['IDF','TF','TF-IDF','None'])
+        expand("data/evaluation/{region}/kmer_k16/{method}_IDF_overlap_stat.tsv",
+        region=['CHM13/IGK/real_cyclone','CHM13/HLA/real_cyclone',
+        'CHM13/IGK/real_ONT','CHM13/HLA/real_ONT',
+        'ara/chr1_30M/real_ONT','rice/chr1_43M/real_ONT_new',
+        'CHM13/chr22_51M/real_cyclone','CHM13/chr22_51M/real_ONT'],
+        method=['SimHash_Hamming_None','MinHash_Jaccard_None'])
 
-rule article_test10:
+
+rule middle_region:
     input:
-        expand("data/evaluation/{region}/kmer_k16/{demethod}_{distance}_{dimension}_{preprocess}_overlap_stat.tsv",
-        region=['rice/chr1_43M/real_ONT_new'],
-        demethod=['Exact'], 
-        distance=['Cosine','Euclidean'],
-        dimension=['None'],
-        preprocess=['IDF','TF','TF-IDF','None'])
+        expand("data/evaluation/{region}/kmer_k16/Exact_Cosine_{dim}_500d_IDF_overlap_stat.tsv",
+        region=['ara/chr1_30M/real_ONT','rice/chr1_43M/real_ONT_new',
+        'CHM13/chr22_51M/real_cyclone','CHM13/chr22_51M/real_ONT'],
+        dim=['GaussianRP','SparseRP','umap'])
 
 
-rule article_test_d:
+rule middle_region_ANN:
     input:
-        expand("data/evaluation/{region}/kmer_k16/{demethod}_{distance}_{dimension}_{preprocess}_overlap_stat.tsv",
-        region=['CHM13/IGK/real_cyclone','CHM13/HLA/real_cyclone','CHM13/chr1_248M/real_cyclone','ara/chr1_30M/real_ONT','rice/chr1_43M/real_ONT_new','yeast/chr4_1M/real_cyclone'],
-        demethod=['HNSW'],
-        distance=['Cosine'],
-        dimension=['GaussianRP_500d','SparseRP_500d','umap_500d'],
-        preprocess=['IDF'])
+        expand("data/evaluation64/{region}/kmer_k16/{ann}_Cosine_SparseRP_3000d_IDF_nn_time.json",
+        region=['ara/chr1_30M/real_ONT','rice/chr1_43M/real_ONT_new',
+        'CHM13/chr22_51M/real_cyclone','CHM13/chr22_51M/real_ONT'],
+        ann=['HNSW','PQ','IVFPQ','NNDescent'])
 
-rule article_test_d4:
+
+rule large_region:
     input:
-        expand("data/evaluation/{region}/kmer_k16/{demethod}_{distance}_{dimension}_{preprocess}_overlap_stat.tsv",
-        region=['CHM13/IGK/real_ONT','CHM13/HLA/real_ONT'], ##拟南芥无法运行成功
-        demethod=['HNSW','PQ','NNDescent'],
-        distance=['Cosine'],
-        dimension=['None'],
-        preprocess=['IDF'])
+        expand("data/evaluation/{region}/kmer_k16/Exact_Cosine_SparseRP_3000d_IDF_overlap_stat.tsv",
+        region=['CHM13/chr1_248M/real_cyclone','CHM13/chr1_248M/real_ONT'])
 
-rule article_test_d2:
+rule chr22_minimap2:
     input:
-        expand("data/evaluation/{region}/kmer_k16/{demethod}_{distance}_{dimension}_{preprocess}_overlap_stat.tsv",
-        region=['CHM13/IGK/real_cyclone','CHM13/HLA/real_cyclone','ara/chr1_30M/real_ONT','yeast/chr4_1M/real_cyclone'], ##拟南芥无法运行成功
-        demethod=['HNSW'],
-        distance=['Cosine'],
-        dimension=['Spectural_500d','PCA_500d','scBiMap_500d'],
-        preprocess=['IDF'])
+        expand("data/evaluation/{region}/kmer_k16/Minimap2_overlap_stat.tsv",
+        region=['CHM13/chr22_51M/real_cyclone','CHM13/chr22_51M/real_ONT'])
 
-rule article_test_d3:
+rule minimap2:
     input:
-        expand("data/evaluation/{region}/kmer_k16/{demethod}_None_IDF_overlap_stat.tsv",
-        region=['ara/chr1_30M/real_ONT','rice/chr1_43M/real_ONT_new'],
-        demethod=['MinHash_Jaccard'])
+        expand("data/evaluation/CHM13/{chromosome}/real_cyclone/kmer_k16/Minimap2_overlap_sizes.pkl",
+        chromosome=['chr9_150M','chr13_113M','chr14_101M','chr15_98M','chr21_45M','chr22_51M'])
 
-rule article_test_e_other:
+rule chr1_test:
     input:
-        expand("data/evaluation/{region}/{platform}/kmer_k16/{demethod}_{distance}_{dimension}_{preprocess}_overlap_stat.tsv",
-        region=['CHM13/IGK','CHM13/HLA','CHM13/chr1_248M'],
-        platform=['real_ONT'],
-        demethod=['Exact'], 
-        distance=['Cosine','Euclidean'],
-        dimension=['None'], 
-        preprocess=['IDF','TF','TF-IDF','None'])
+        "data/evaluation/CHM13/chr1_248M/real_cyclone/kmer_k16/HNSW_Cosine_SparseRP_6000d_IDF_overlap_sizes.pkl"
 
-rule article_test12:
+rule generate_simulate_data:
     input:
-        expand("data/evaluation/{region}/kmer_k16/{demethod}_{distance}_{dimension}_{preprocess}_overlap_stat.tsv",
-        region=['ara/chr1_30M/real_ONT','rice/chr1_43M/real_ONT_new'],
-        demethod=['HNSW'],
-        distance=['Cosine'],
-        dimension=['Spectural_500d','GaussianRP_500d','SparseRP_500d','umap_500d','PCA_500d','scBiMap_500d'],
-        preprocess=['IDF'])
+        expand("data/evaluation/{sample}/pbsim_ONT_{accuracy}_{length_kb}k_{depth}dep/kmer_k16/Exact_Cosine_None_{preprocess}_overlap_sizes.pkl",
+        sample=['CHM13/IGK','rice/chr1_43M'],
+        accuracy=['99','97','95','93','91'],
+        length_kb=[10,15,20,25,30],
+        depth=[10,30,50],
+        preprocess=['TF-IDF'])
 
-rule article_test2:
+rule rpf_PT:
     input:
-        expand("data/evaluation/{region}/{platform}/kmer_k16/{demethod}_{distance}_{dimension}_{preprocess}_overlap_stat.tsv",
-        region=['CHM13/HLA','yeast/chr10','TAIR/chr3'],
-        platform=['pbsim_ONT_93_30k','pbsim_ONT_95_20k','pbsim_ONT_98_10k','pbsim_ONT_93_20k','pbsim_ONT_93_10k',
-        'pbsim_ONT_95_30k','pbsim_ONT_95_10k','pbsim_ONT_98_20k','pbsim_ONT_98_30k'],
-        demethod=['Exact',],
-        distance=['Cosine','Euclidean'],
-        dimension=['None'],
-        preprocess=['IDF','TF','TF-IDF','None'])
+        expand("data/evaluation/CHM13/chr1_248M/real_cyclone/kmer_k16/RPForest_config{config}/RPForest_Cosine_SparseRP_3000d_IDF_overlap_sizes.pkl",
+        config=[1,2,3])
 
 
-rule article_test3:
+rule minimap2_log:
     input:
-        expand("data/evaluation/{region}/{platform}/kmer_k16/{demethod}_{distance}_{dimension}_{preprocess}_overlap_stat.tsv",
-        region=['CHM13/HLA','yeast/chr10'],
-        platform=['pbsim_ONT_93_30k'],
-        demethod=['HNSW'],
-        distance=['Cosine','Euclidean'],
-        dimension=['Spectural_500d','GaussianRP_500d','SparseRP_500d','umap_500d','PCA_500d','scBiMap_500d'],
-        preprocess=['IDF'])
+        expand("data/minimap2/CHM13/{region}/real_cyclone/minimap2.log",
+        region=['chr9_150M','chr13_113M','chr14_101M','chr15_98M','chr21_45M','chr22_51M']
+        )
 
-rule article_test6:
+rule simulate:
     input:
-        expand("data/evaluation/{region}/{platform}/kmer_k16/{demethod}_{distance}_{dimension}_{preprocess}_overlap_stat.tsv",
-        region=['CHM13/HLA','yeast/chr10','TAIR/chr3'],
-        platform=['pbsim_ONT_93_30k'],
-        demethod=['HNSW','PQ','NNDescent','Exact'],
-        distance=['Euclidean'],
-        dimension=['GaussianRP_500d'],
-        preprocess=['IDF'])
+        expand("data/evaluation/{region}/pbsim_ONT_{accu}_{length}k/kmer_k16/Exact_Cosine_None_{preprocess}_overlap_sizes.pkl",
+        region=['CHM13/HLA','rice/chr1_43M'],
+        accu=['99','97','95','93','91'],
+        length=[10,15,20,25,30],
+        preprocess=['TF-IDF']
+        )
 
-rule article_test7:
+rule test_rpforest:
     input:
-        expand("data/evaluation/{region}/{platform}/kmer_k16/{demethod}_None_IDF_overlap_stat.tsv",
-        region=['CHM13/HLA','yeast/chr10','TAIR/chr3','CHM13/IGK'],
-        platform=['pbsim_ONT_93_30k'],
-        demethod=['MinHash_Jaccard','SimHash_Hamming'])
-
-rule article_test8:
-    input:
-        expand("data/evaluation/{region}/{platform}/kmer_k16/{demethod}_None_IDF_overlap_stat.tsv",
-        region=['CHM13/HLA','CHM13/IGK','yeast/chr10'],
-        platform=['pbsim_ONT_93_30k'],
-        demethod=['HNSW_Cosine','HNSW_Euclidean'])
-
- 
-rule article_test_dimension:
-    input:
-        expand("data/evaluation/{region}/{platform}/kmer_k16/{method}_overlap_stat.tsv",
-        region=['CHM13/IGK','CHM13/HLA','yeast/chr10','TAIR/chr3'],
-        platform=['pbsim_ONT_93_30k','pbsim_ONT_95_20k','pbsim_pb_hifi_10k'],
-        method=[
-            'Exact_Euclidean_None_IDF','Exact_Cosine_None_IDF','WeightedMinHash_Jaccard_None_IDF','Minimap2'
-        ])
+        expand("data/evaluation/CHM13/IGK/real_cyclone/kmer_k16/RPForest_config{num}_overlap_stat.tsv",
+        num=['1','2','3','4','5','6','7','8','9','10'])

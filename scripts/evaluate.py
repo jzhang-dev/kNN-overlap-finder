@@ -24,7 +24,7 @@ class NearestNeighborsConfig:
     nearest_neighbors_kw: dict = field(default_factory=dict, repr=False)
 
     def get_neighbors(
-        self, data: csr_matrix, n_neighbors: int, *, verbose=True
+        self, data: csr_matrix, n_neighbors: int, *, sample_query=False, verbose=True
     ) -> tuple[ndarray, Mapping[str, float], Mapping[str, float]]:
         elapsed_time = {}
         peak_memory = {} # TODO
@@ -65,6 +65,7 @@ class NearestNeighborsConfig:
         if verbose:
             print("Nearest neighbors.")
         start_time = time.time()
+
         neighbor_indices = self.nearest_neighbors_method().get_neighbors(
             _data, n_neighbors=n_neighbors, **self.nearest_neighbors_kw
         )

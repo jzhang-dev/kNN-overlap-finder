@@ -19,7 +19,6 @@ import random
 import pynear
 import faiss
 import pynndescent
-
 from data_io import parse_paf_file, get_sibling_id
 def hamming_distance(x, y):  
     return np.count_nonzero(x != y)
@@ -53,7 +52,12 @@ def generalized_jaccard_distance(
 
 class ExactNearestNeighbors(_NearestNeighbors):
     def get_neighbors(
-        self, data: csr_matrix | np.ndarray, metric="cosine", n_neighbors: int = 20
+        self, data: csr_matrix | np.ndarray, 
+        metric="cosine", 
+        n_neighbors: int = 20,
+        n_jobs: int | None = 64,
+        sample_query_number: int|None = None,
+        seed =654556,
     ):
 
         if metric == "jaccard" and isinstance(data, csr_matrix):
@@ -64,11 +68,16 @@ class ExactNearestNeighbors(_NearestNeighbors):
             _metric = metric
 
         nbrs = sklearn.neighbors.NearestNeighbors(
-            n_neighbors=n_neighbors, metric=_metric
+            n_neighbors=n_neighbors, metric=_metric,n_jobs=n_jobs
         )
 
         nbrs.fit(data)
-        _, nbr_indices = nbrs.kneighbors(data)
+        if sample_query_number != None:
+            random_row_indices = np.random.choice(data.shape[0], size=sample_query_number, replace=False)
+            sampled_matrix = data[random_row_indices, :]
+            _, nbr_indices = nbrs.kneighbors(sampled_matrix)
+        else:
+            _, nbr_indices = nbrs.kneighbors(data)
         return nbr_indices
 
 
@@ -79,9 +88,10 @@ class NNDescent(_NearestNeighbors):
         metric="cosine",
         n_neighbors: int = 20,
         *,
-        n_trees: int = 100,
+        n_trees: int| None = 300,
+        leaf_size: int| None = 200,
         low_memory: bool = True,
-        n_jobs: int | None = None,
+        n_jobs: int | None = 64,
         seed: int | None = 683985,
         verbose: bool = True,
     ):
@@ -90,6 +100,7 @@ class NNDescent(_NearestNeighbors):
             metric=metric,
             n_neighbors=n_neighbors,
             n_trees=n_trees,
+            leaf_size=leaf_size,
             low_memory=low_memory,
             n_jobs=n_jobs,
             random_state=seed,
@@ -106,8 +117,8 @@ class HNSW(_NearestNeighbors):
         n_neighbors: int,
         metric: Literal["euclidean", "cosine"] = "euclidean",
         *,
-        threads: int | None = None,
-        M: int = 16,
+        threads: int | None = 64,
+        M: int = 512,
         ef_construction: int = 200,
         ef_search: int = 50,
     ) -> np.ndarray:
@@ -368,6 +379,9 @@ class WeightedLowHash(LowHash):
         if verbose:
             print("")
         lowhash_buckets = sparse.csr_matrix(lowhash_buckets)
+        non_zero_counts = lowhash_buckets.getnnz(axis=1)
+        num_non_zero_rows = (non_zero_counts > 0).sum()
+        print(f'num_non_zero_rows:{num_non_zero_rows}')
         return lowhash_buckets
 
     def get_neighbors(
@@ -583,6 +597,22 @@ class PAFNearestNeighbors(_NearestNeighbors):
             nbr_matrix[i, : len(neighbors)] = neighbors
         return nbr_matrix
 
+class RPForest(_NearestNeighbors):
+    def get_neighbors(
+        self,
+        data: csr_matrix | np.ndarray,
+        n_neighbors: int,
+        metric: Literal["euclidean","cosine"] = "euclidean",
+        *,
+        leaf_size=50,
+        no_trees=10,
+    ) -> np.ndarray:
+
+        model = RPForest(leaf_size=leaf_size, no_trees=no_trees)
+        model.fit(data)
+        nns = model.query(data, n_neighbors)
+        return nns
+
 
 class ProductQuantization(_NearestNeighbors):
     def get_neighbors(
@@ -591,12 +621,13 @@ class ProductQuantization(_NearestNeighbors):
         n_neighbors: int,
         metric: Literal["euclidean","cosine"] = "euclidean",
         *,
-        m=8,
-        nbits=8,
+        m=64,
+        n_bits=8,
         seed=455390,
+        threads: int = 64
     ) -> np.ndarray:
 
-
+        faiss.omp_set_num_threads(threads)
         if sparse.issparse(data):
             data = data.toarray()
             #raise TypeError("ProductQuantization does not support sparse arrays.")
@@ -618,7 +649,7 @@ class ProductQuantization(_NearestNeighbors):
             data = np.array(data,order='C').astype('float32')
             faiss.normalize_L2(data)
         
-        param = "PQ8"
+        param = f"PQ{m}x{n_bits}"
         index = faiss.index_factory(new_feature_count,param,measure)
         index.train(data)
         index.add(data)
@@ -632,15 +663,21 @@ class IVFProductQuantization(_NearestNeighbors):
         n_neighbors: int,
         metric: Literal["euclidean","cosine"] = "euclidean",
         *,
-        m=8,
-        nbits=8, 
+        M=128,
+        n_list=1024,
+        n_bits=8, 
+        n_probe=100,
         seed=455390,
+        threads: int = 64
     ) -> np.ndarray:
+        
+        faiss.omp_set_num_threads(threads)
+
         if sparse.issparse(data):
             raise TypeError("ProductQuantization does not support sparse arrays.")
         feature_count = data.shape[1]
-        if feature_count % m != 0:
-            new_feature_count = feature_count // m * m
+        if feature_count % M != 0:
+            new_feature_count = feature_count // M * M
             feature_indices = np.random.default_rng(seed).choice(
                 feature_count, new_feature_count, replace=False, shuffle=False
             )
@@ -649,18 +686,21 @@ class IVFProductQuantization(_NearestNeighbors):
             new_feature_count = feature_count
         assert data.shape[1]
 
+        data = np.array(data, order='C').astype('float32')
+        faiss.normalize_L2(data)
+
         if metric == "euclidean":
             measure = faiss.METRIC_L2
         else:
             measure = faiss.METRIC_INNER_PRODUCT
-            data = np.array(data,order='C').astype('float32')
-            faiss.normalize_L2(data)
         
-        param = "IVF100,PQ8"
-        index = faiss.index_factory(new_feature_count,param,measure)
+        quantizer = faiss.IndexFlatL2(new_feature_count)  # 量化器
+        index = faiss.IndexIVFPQ(quantizer, new_feature_count, n_list, M, n_bits)
+        index.metric_type = measure
         index.train(data)
         index.add(data)
-        _, nbr_indices = index.search(data, n_neighbors)  # type: ignore
+        index.nprobe = n_probe
+        _, nbr_indices = index.search(data, n_neighbors)
         return nbr_indices
 
 class SimHash(_NearestNeighbors):
@@ -688,7 +728,7 @@ class SimHash(_NearestNeighbors):
         self,
         data: csr_matrix | np.ndarray,
         n_neighbors: int,
-        repeats=400,
+        repeats=500,
         seed=20141025,
     ) -> np.ndarray:
         assert data.shape is not None

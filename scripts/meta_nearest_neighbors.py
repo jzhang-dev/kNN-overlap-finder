@@ -119,6 +119,55 @@ class HNSW(_NearestNeighbors):
         nbr_indices, _ = p.knn_query(que, k=n_neighbors)
         return nbr_indices
 
+class HNSW_parallel(_NearestNeighbors):
+    ## Parallel will use more memory, but short time
+    def get_neighbors(
+        self,
+        ref: csr_matrix | np.ndarray,
+        que: csr_matrix | np.ndarray,
+        n_neighbors: int,
+        metric: Literal["euclidean", "cosine"] = "euclidean",
+        *,
+        threads: int | None = None,
+        M: int = 16,
+        ef_construction: int = 200,
+        ef_search: int = 50,
+    ) -> np.ndarray:
+        
+        if sparse.issparse(ref):
+            ref = ref.toarray()
+        if sparse.issparse(que):
+            que = que.toarray()
+        if metric == "euclidean":
+            space = "l2"
+        else:
+            space = metric
+
+        # Initialize the HNSW index
+        p = hnswlib.Index(space=space, dim=ref.shape[1])
+        if threads is not None:
+            p.set_num_threads(threads)
+        p.init_index(max_elements=ref.shape[0], ef_construction=ef_construction, M=M)
+        ids = np.arange(ref.shape[0])
+        p.add_items(ref, ids)
+        p.set_ef(ef_search)
+
+        # Split query matrix into chunks for parallel processing
+        def process_query_chunk(query_chunk):
+            return p.knn_query(query_chunk, k=n_neighbors)[0]
+
+        # Number of chunks (equal to the number of threads)
+        num_chunks = threads if threads is not None else 4
+        query_chunks = np.array_split(que, num_chunks)
+
+        # Use ThreadPoolExecutor for parallel processing
+        with ThreadPoolExecutor(max_workers=num_chunks) as executor:
+            results = list(executor.map(process_query_chunk, query_chunks))
+
+        # Concatenate results
+        nbr_indices = np.vstack(results)
+        return nbr_indices
+
 class SimHash(_NearestNeighbors):
     @staticmethod
     def _get_hash_table(
@@ -447,8 +496,8 @@ class NearestNeighborsConfig:
     nearest_neighbors_method: Type[_NearestNeighbors] = ExactNearestNeighbors
     nearest_neighbors_kw: dict = field(default_factory=dict, repr=False)
 
-    def get_neighbors(
-        self, ref: csr_matrix | np.ndarray, que: csr_matrix | np.ndarray, n_neighbors: int, *, verbose=True
+    def preprocess_dim(
+        self, ref: csr_matrix | np.ndarray, que: csr_matrix | np.ndarray, *, verbose=True
     ) -> tuple[ndarray, Mapping[str, float], Mapping[str, float]]:
         
         elapsed_time = {}
@@ -478,19 +527,22 @@ class NearestNeighborsConfig:
             que_fit =  transformer.transform(que)
             elapsed_time['tfidf'] = time.time() - start_time
 
-
         if self.dimension_reduction_method is not None:
             if verbose:
                 print("Dimension reduction.")
             start_time = time.time()
             _data = self.dimension_reduction_method().transform(_data, **self.dimension_reduction_kw)
             elapsed_time['dimension_reduction'] = time.time() - start_time
-        
-        if verbose:
-            print("Nearest neighbors.")
-        ref_read_num = ref.shape[0]
+        ref_read_num = ref_train.shape[0]
         _ref = _data[:ref_read_num]
         _que = _data[ref_read_num:]
+        return _ref, _que, elapsed_time, peak_memory
+    
+    def get_neighbors(
+        self, _ref: csr_matrix | np.ndarray ,_que: csr_matrix | np.ndarray, 
+        elapsed_time, peak_memory,n_neighbors: int, *, verbose=True
+    ) -> tuple[ndarray, Mapping[str, float], Mapping[str, float]]:
+        
         start_time = time.time()
         neighbor_indices = self.nearest_neighbors_method().get_neighbors(
             _ref,_que, n_neighbors=n_neighbors, **self.nearest_neighbors_kw
@@ -500,15 +552,25 @@ class NearestNeighborsConfig:
             print(f"Finished {self}. Elapsed time: {elapsed_time}. Peak memory: {peak_memory}")
         return neighbor_indices, elapsed_time, peak_memory
     
-def compute_nearest_neighbors(
+def do_proprecess_dim(
     ref: csr_matrix | np.ndarray, 
     que: csr_matrix | np.ndarray,
     config: NearestNeighborsConfig,
-    n_neighbors: int,
     *,
     verbose=True,
 ) -> tuple[ndarray,ndarray,ndarray]:
-    
-    neighbor_indices, elapsed_time, peak_memory = config.get_neighbors(ref=ref,que=que, n_neighbors=n_neighbors, verbose=verbose)
+    _ref, _que, elapsed_time, peak_memory = config.preprocess_dim(ref,que)
+    return _ref, _que, elapsed_time, peak_memory 
 
+def compute_nearest_neighbor(
+    _ref: csr_matrix | np.ndarray, 
+    _que: csr_matrix | np.ndarray,
+    elapsed_time,
+    peak_memory,
+    config: NearestNeighborsConfig,
+    n_neighbors,
+    *,
+    verbose=True,
+) -> tuple[ndarray,ndarray,ndarray]:
+    neighbor_indices, elapsed_time, peak_memory = config.get_neighbors(_ref,_que,elapsed_time, peak_memory,n_neighbors)
     return neighbor_indices, elapsed_time, peak_memory

@@ -30,13 +30,8 @@ tsv_path = sys.argv[4]
 json_path = sys.argv[5]
 nbr_path = sys.argv[6]
 method = sys.argv[7]
-if len(sys.argv) > 8:
-    ANN_parameter_file = sys.argv[8]
-    with open(ANN_parameter_file, 'r') as f:
-        ANN_parameter = json.load(f)
-    print(f'Params: {ANN_parameter}')
-else:
-    ANN_parameter = {}
+n_neighbors = sys.argv[8]
+
 meta_df = pd.read_table(tsv_path).iloc[:MAX_SAMPLE_SIZE, :].reset_index()
 read_indices = {read_name: read_id for read_id, read_name in meta_df['read_name'].items()}
 feature_matrix = sp.sparse.load_npz(npz_path)[meta_df.index, :]
@@ -56,7 +51,7 @@ ax.grid(color='k', alpha=0.1)
 
 kw = dict(data=feature_matrix)
 max_bucket_size = COVERAGE_DEPTH * 1.5
-max_n_neighbors = COVERAGE_DEPTH
+max_n_neighbors = int(n_neighbors)
 
 print(method)
 if method == 'Minimap2':
@@ -65,24 +60,16 @@ if method == 'Minimap2':
     neighbor_indices = PAFNearestNeighbors().get_neighbors(
             data=feature_matrix, n_neighbors=max_n_neighbors, paf_path=paf_path, read_indices=read_indices
         )
-    elapsed_time['nearest_neighbors'] = time.time() - start_time
-elif 'Exact' in method and 'chr1_248M' in tsv_path:
-    print('For saving time, extract 1w reads as query reads.')
-    config = parse_string_to_config(method,{'sample_query_number':10000})
-    neighbor_indices, elapsed_time, peak_memory = compute_nearest_neighbors(
-        data=feature_matrix,
-        config=config,
-        n_neighbors=max_n_neighbors,
-        read_features=read_features,
-    )
+    elapsed_time['nearest_neighbors'] = time.time() - start_time    
 else:
-    config = parse_string_to_config(method,ANN_parameter)
+    config = parse_string_to_config(method,{})
     neighbor_indices, elapsed_time, peak_memory = compute_nearest_neighbors(
         data=feature_matrix,
         config=config,
         n_neighbors=max_n_neighbors,
         read_features=read_features,
     )
+print(neighbor_indices)
 
 np.savez(nbr_path, neighbor_indices)
 with open(time_path, 'w', encoding='utf-8') as f:

@@ -30,14 +30,15 @@ region = snakemake.wildcards['region']
 method = snakemake.wildcards['method']
 
 npz_path = snakemake.input['feature_matrix']
-ref_graph_path = snakemake.input['ref_graph']
 tsv_path = snakemake.input['metadata']
 json_path = snakemake.input['read_features']
 nbr_path = snakemake.input['nbr_indice']
+
 overlap_sizes_file= snakemake.output['neighbor_overlap_sizes']
 threads  = snakemake.threads
 
 print(sample, dataset, region)
+
 meta_df = pd.read_table(tsv_path).iloc[:MAX_SAMPLE_SIZE, :].reset_index()
 read_indices = {read_name: read_id for read_id, read_name in meta_df['read_name'].items()}
 
@@ -48,8 +49,25 @@ with gzip.open(json_path, "rt") as f:
 data = np.load(nbr_path) 
 nbr_indices = data['arr_0']
 
-with open(ref_graph_path,'rb') as f:
-    reference_graph = pickle.load(f)
+def get_read_intervals(meta_df):
+    read_intervals = {
+        i: [GenomicInterval(strand, start, end)]
+        for i, strand, start, end in zip(
+            meta_df.index,
+            meta_df["reference_strand"],
+            meta_df["reference_start"],
+            meta_df["reference_end"],
+        )
+    }
+    return read_intervals
+
+read_intervals = get_read_intervals(meta_df)
+
+reference_graph = OverlapGraph.from_intervals(read_intervals)
+nr_edges = set((node_1, node_2) for node_1, node_2, data in reference_graph.edges(data=True) if not data['redundant'])
+connected_component_count = len(list(nx.connected_components(reference_graph)))
+len(reference_graph.nodes), len(reference_graph.edges), len(nr_edges), connected_component_count
+
 max_n_neighbors=20
 df_rows = []
 read_ids = np.array(list(read_features))

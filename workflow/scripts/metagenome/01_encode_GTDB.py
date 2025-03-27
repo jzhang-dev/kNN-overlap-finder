@@ -11,44 +11,57 @@ sys.path.append('/home/miaocj/docker_dir/kNN-overlap-finder/scripts')
 sys.path.append('./')
 from encode_function import encode_reads
 from accelerate import open_gzipped,parse_fasta
+import concurrent.futures
+import pickle
 
-# Build gtdb_taxonomy
+
 def extract_groups(taxonomy):
+    pattern = r'^.+s__(.+ .+)$'
     match = re.search(pattern, taxonomy)
     if match:
         return match.group(1)
     else:
         return None
 
-pattern = r'^.+s__(.+ .+)$'
-gtdb_taxonomy = pd.read_csv('/home/miaocj/docker_dir/data/GTDB_download/release220/taxonomy/gtdb_taxonomy.tsv',sep='\t',header=None)
-gtdb_taxonomy.columns=['tax_id','taxonomy']
-gtdb_taxonomy[['species']] = gtdb_taxonomy['taxonomy'].apply(lambda x: pd.Series(extract_groups(x))) ## eg: ['GCA454151','Arabidopsis thanlian']
-print('gtdb_taxonomy building finished')
+def process_batch(batch_id, db_part_path, kmer_dict, id_dict, gtdb_taxonomy):
+    # 构建特征矩阵
+    feature_matrix, read_features, metadata = encode_reads(
+        db_part_path, kmer_dict, id_dict, gtdb_taxonomy, 16
+    )
+    print(f'feature matrix shape: {feature_matrix.shape}')
+    print(f'Batch {batch_id}: feature_matrix building finished')
 
-with open("/home/miaocj/docker_dir/data/GTDB_download/release220/skani/gtdb_all_fa/readid_gcaid.json", "rt") as json_file:
-    id_dict = json.load(json_file) 
-print('id_dict load finished')
+    # 定义输出文件路径
+    output_npz_file = f'/home/miaocj/docker_dir/kNN-overlap-finder/data/feature_matrix/metagenome/GTDB/all_rp/feature_matrix_{batch_id}.npz'
+    output_json_file = f'/home/miaocj/docker_dir/kNN-overlap-finder/data/feature_matrix/metagenome/GTDB/all_rp/read_features_{batch_id}.json.gz'
+    output_tsv_file = f'/home/miaocj/docker_dir/kNN-overlap-finder/data/feature_matrix/metagenome/GTDB/all_rp/metadata_{batch_id}.tsv.gz'
 
-fasta_file = "/home/miaocj/docker_dir/kNN-overlap-finder/data/metagenome_reference/GTDB/mer_sampled.fa"
-kmer_dict = collections.defaultdict()
-for i,record in enumerate(parse_fasta(fasta_file)):
-    kmer_dict[record[1]] = i
+    # 保存文件
+    sp.save_npz(output_npz_file, feature_matrix)
+    with gzip.open(output_json_file, "wt") as f:
+        json.dump(read_features, f)
+    metadata.to_csv(output_tsv_file, index=False, sep="\t")
+    print(f'Batch {batch_id}: files saved successfully')
 
-print('kmer_dict building finished')
+def main():
+    # 输入参数
+    gtdb_taxonomy = pd.read_csv('/home/miaocj/docker_dir/data/GTDB_download/release220/taxonomy/gtdb_taxonomy.tsv',sep='\t',header=None)
+    gtdb_taxonomy.columns=['tax_id','taxonomy']
+    gtdb_taxonomy[['species']] = gtdb_taxonomy['taxonomy'].apply(lambda x: pd.Series(extract_groups(x))) ## eg: ['GCA454151','Arabidopsis thanlian']
+    gtdb_taxonomy = gtdb_taxonomy.set_index('tax_id')
+    print('gtdb_taxonomy building finished')
 
-db_part_path = sys.argv[1]
-batch_id = sys.argv[2] 
-batch_size = 200000
-feature_matrix, read_features, metadata = encode_reads(db_part_path,kmer_dict,id_dict,gtdb_taxonomy,16,int(batch_id),batch_size)
-print('feature_matrix building finished')
+    with open("/home/miaocj/docker_dir/data/GTDB_download/release220/skani/gtdb_all_fa/readid_gcaid.json", "rt") as json_file:
+        id_dict = json.load(json_file) 
+    print('id_dict load finished')
 
-output_npz_file = f'/home/miaocj/docker_dir/kNN-overlap-finder/data/feature_matrix/metagenome/GTDB/feature_matrix_{batch_id}.npz'
-output_json_file = f'/home/miaocj/docker_dir/kNN-overlap-finder/data/feature_matrix/metagenome/GTDB/read_features_{batch_id}.npz'
-output_tsv_file = f'/home/miaocj/docker_dir/kNN-overlap-finder/data/feature_matrix/metagenome/GTDB/metadata_{batch_id}.tsv.gz'
+    with open("/home/miaocj/docker_dir/kNN-overlap-finder/data/metagenome_reference/GTDB/kmer_dict.pkl", "rb") as file:
+        kmer_dict = pickle.load(file)
+    print('kmer_dict load finished')
+    
+    batch_id = sys.argv[1]
+    db_part_path = f'/home/miaocj/docker_dir/kNN-overlap-finder/data/metagenome_reference/GTDB/GTDB_rp/GTDB_rp_{batch_id}.fa'
+    process_batch(batch_id,db_part_path,kmer_dict, id_dict, gtdb_taxonomy)
 
-sp.save_npz(output_npz_file, feature_matrix)
-with open_gzipped(output_json_file, "wt") as f:
-    json.dump(read_features, f)
-metadata.to_csv(output_tsv_file, index=False, sep="\t")
-
+if __name__ == "__main__":
+    main()

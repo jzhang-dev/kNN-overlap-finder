@@ -72,29 +72,25 @@ def encode_reads(
     kmer_dict:Mapping[int,str], #  {'ATGG':index}
     id_dict: Mapping[str,str], # {read_name:gca_id}
     gtdb_taxonomy: pd.DataFrame, # [gca_id,species]
-    k,
-    batch_id:int,
-    batch_size:int,
+    k
 ):
     """
     Encodes sequencing reads from a gzipped FASTA file as a sparse matrix.
     """
     # Load reads
     read_names, read_orientations, read_sequences = load_reads(db_path=db_path)
-
+    print("reads loading done")
     # Build matrix
     feature_matrix, read_features = finding_kmer(kmer_dict, read_sequences, k)
+    print("find kmer done")
     # Build metadata
     rows = []
     for i in range(len(read_sequences)):
-        if i %100000 == 0:
-            print(i)
         read_name = read_names[i]
         read_orientation = read_orientations[i]
         gca_id = id_dict[read_name]
         rows.append(
             dict(
-                read_id=i + batch_size*2*(batch_id-1),
                 read_name=read_name,
                 read_orientation=read_orientation,
                 gca_id=gca_id,

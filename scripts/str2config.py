@@ -1,8 +1,8 @@
 from evaluate import NearestNeighborsConfig
-from dim_reduction import SpectralEmbedding, scBiMapEmbedding,GaussianRandomProjection,SparseRandomProjection,SimHash_Dimredu,PCA,isomap,umapEmbedding
-from nearest_neighbors import ExactNearestNeighbors,PAFNearestNeighbors,SimHash,HNSW,ProductQuantization,NNDescent,WeightedLowHash
+from dim_reduction import SpectralEmbedding, scBiMapEmbedding,GaussianRandomProjection,SparseRandomProjection,SimHash_Dimredu,PCA,isomap,umapEmbedding,Split_GRP
+from nearest_neighbors import ExactNearestNeighbors,PAFNearestNeighbors,SimHash,HNSW,ProductQuantization,NNDescent,WeightedLowHash,IVFProductQuantization
 max_bucket_size = 20
-def parse_string_to_config(input_string: str) -> NearestNeighborsConfig:
+def parse_string_to_config(input_string: str,nearest_neighbors_parameter: dict) -> NearestNeighborsConfig:
     # 将字符串按下划线分割
     mydict = {  
     'Exact':ExactNearestNeighbors,
@@ -11,8 +11,10 @@ def parse_string_to_config(input_string: str) -> NearestNeighborsConfig:
     'PQ':ProductQuantization,
     'NNDescent':NNDescent,
     'MinHash':WeightedLowHash,
+    'IVFPQ':IVFProductQuantization,
     'Euclidean':'euclidean',
     'Cosine':'cosine',
+    'SplitGRP':Split_GRP,
     'GaussianRP':GaussianRandomProjection,
     'SparseRP':SparseRandomProjection,
     'scBiMap':scBiMapEmbedding,
@@ -30,6 +32,7 @@ def parse_string_to_config(input_string: str) -> NearestNeighborsConfig:
         dimension_reduction_method = mydict[parts[2]]
         dimension_reduction_kw = dict(n_dimensions=int(parts[3][:-1]))  # 去掉最后的'd'
         nearest_neighbors_kw = dict(metric=mydict[parts[1]])
+        nearest_neighbors_kw.update(nearest_neighbors_parameter)
         myNearestNeighborsConfig = NearestNeighborsConfig(
         nearest_neighbors_method=nearest_neighbors_method,
         description=description,

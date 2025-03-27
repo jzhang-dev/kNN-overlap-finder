@@ -27,7 +27,7 @@ print('finished database process')
 
 ## -------------处理模拟样本-----------
 id_readname = {}
-file = "/home/miaocj/docker_dir/kNN-overlap-finder/data/metagenome_reference/GTDB/mer_sampled.fa"
+file = "/home/miaocj/docker_dir/data/cami_download/2018.01.23_11.53.11_sample_0/reads/anonymous_reads.fa"
 with open(file, "rt") as handle:
     for i,record in enumerate(SeqIO.parse(handle, "fasta")):
         id_readname[i]=record.id ## {index:read_id} 获取index和id之间的关系

@@ -76,9 +76,11 @@ def get_metadata(fasta_gz_file,paf_gz_file) -> pd.DataFrame:
 def main(snakemake: "SnakemakeContext"):
     fasta_file = snakemake.input["fasta_aligned"]
     paf_file = snakemake.input["paf"]
+
     fasta = snakemake.output["fasta"]
     output_tsv_file = snakemake.output["tsv"]
     output_stat_file = snakemake.output["stat"]
+    
     metadata,read_stat,pass_reads = get_metadata(fasta_file,paf_file)
     metadata.to_csv(output_tsv_file, sep="\t", index=False)
     read_stat.to_csv(output_stat_file,sep="\t")

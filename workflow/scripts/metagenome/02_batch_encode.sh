@@ -8,13 +8,13 @@ start=$((($output_file_index - 1) * $batch_size + 1))
 end=$(($output_file_index * $batch_size))
 echo "Start: $start"
 echo "End: $end"
-input_file="/home/miaocj/docker_dir/kNN-overlap-finder/data/metagenome_reference/GTDB/GTDB_database.fna"
-output_file="/home/miaocj/docker_dir/kNN-overlap-finder/data/metagenome_reference/GTDB/GTDB_${output_file_index}.fa"
+input_file="/home/miaocj/docker_dir/kNN-overlap-finder/data/metagenome_reference/GTDB/GTDB_rp/GTDB_database_rp.fa"
+output_file="/home/miaocj/docker_dir/kNN-overlap-finder/data/metagenome_reference/GTDB/GTDB_rp/GTDB_rp_${output_file_index}.fa"
 if [ -f "$output_file" ]; then
     echo "$output_file exists."
 else
     # 调用 seqkit 提取序列
     seqkit range -r "${start}:${end}" "$input_file" > "$output_file"
 fi
-python /home/miaocj/docker_dir/kNN-overlap-finder/workflow/scripts/metagenome/01_encode_GTDB.py "/home/miaocj/docker_dir/kNN-overlap-finder/data/metagenome_reference/GTDB/GTDB_${output_file_index}.fa" "${output_file_index}" 
+python /home/miaocj/docker_dir/kNN-overlap-finder/workflow/scripts/metagenome/01_encode_GTDB.py "${output_file_index}" 
 
