@@ -306,7 +306,6 @@ rule paf_to_read_info_for_chrs:
         paf="data/real_reads/{sample}/{platform}/all_aligned.paf",
     output:
         tsv="data/regional_reads/{sample}/all/{platform}/read_info.tsv.gz",
-        stat="data/regional_reads/{sample}/all/{platform}/read_usage_statistic.tsv.gz",
         fasta="data/regional_reads/{sample}/all/{platform}/reads.fasta.gz",
     wildcard_constraints:
         platform=r"real.+",
@@ -427,8 +426,8 @@ rule get_neighbors:
     shell:
         """
         /usr/bin/time -v -o {output.log} \
-        mprof run workflow/scripts/get_neighbors.smk.py {output.time} {input.paf_minimap2} {input.feature_matrix} \
-        {input.metadata} {input.read_features} {output.nbr_indice} {wildcards.method}
+        mprof run workflow/scripts/get_neighbors.smk.py --input {input.feature_matrix} {input.read_features} {input.metadata} {input.paf_minimap2} \
+        --output {output.nbr_indice} {output.time} --method {wildcards.method}
         mprof plot -o {output.time}.png
         """
 
@@ -438,24 +437,31 @@ rule get_neighbors_params_tuning:
         read_features="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/read_features.json.gz",
         metadata="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/metadata.tsv.gz",
         paf_minimap2="data/minimap2/{sample}/{region}/{platform}/alignment.paf.gz",
-        params="data/configs/{config}_parameter.json"
-        #paf_blend="data/blend/{sample}/{region}/{platform}/alignment.paf.gz",
+        params="data/configs/{param_type}/{config}_parameter.json" 
     output:
-        nbr_indice="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{config}/{method}_nbr_matrix.npz",
-        time="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{config}/{method}_nn_time.json",
-        log="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{config}/{method}_time.log",
-    threads: 1
+        nbr_indice="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{param_type}_{config}/{method}_nbr_matrix.npz",
+        time="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{param_type}_{config}/{method}_nn_time.json",
+        log="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{param_type}_{config}/{method}_time.log",
+    params:
+        param_flag=lambda wc: "--ann-parameter" if wc.param_type == "ann" else "--dim-parameter"
+    threads: 1 
     wildcard_constraints:
         method=r'[A-Za-z]+_[A-Za-z]+_[A-Za-z]+_(\d+d_)?(IDF|TF|TF-IDF|None)+',
+        param_type=r'ann|dim'
     conda:
         "envs/evaluate.yaml"
     shell:
         """
         /usr/bin/time -v -o {output.log} \
-        mprof run workflow/scripts/get_neighbors.smk.py {output.time} {input.paf_minimap2} {input.feature_matrix} \
-        {input.metadata} {input.read_features} {output.nbr_indice} {wildcards.method} {input.params}
+        mprof run workflow/scripts/get_neighbors.smk.py \
+            --input {input.feature_matrix} {input.read_features} {input.metadata} {input.paf_minimap2} \
+            --output {output.nbr_indice} {output.time} \
+            --method {wildcards.method} \
+            {params.param_flag} {input.params}
         mprof plot -o {output.time}.png
         """
+
+
 rule get_neighbors_diff_n_neighbors:
     input:
         feature_matrix="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/feature_matrix.npz",
@@ -474,8 +480,8 @@ rule get_neighbors_diff_n_neighbors:
     shell:
         """
         /usr/bin/time -v -o {output.log} \
-        mprof run workflow/scripts/get_neighbors_different_n.smk.py {output.time} {input.paf_minimap2} {input.feature_matrix} \
-        {input.metadata} {input.read_features} {output.nbr_indice} {wildcards.method} {wildcards.n_neighbors}
+        mprof run workflow/scripts/get_neighbors.smk.py --input {input.feature_matrix} {input.read_features} {input.metadata} {input.paf_minimap2} \
+        --output {output.nbr_indice} {output.time} --method {wildcards.method} --n-neighbors {wildcards.n_neighbors}
         mprof plot -o {output.time}.png
         """
 
@@ -518,7 +524,7 @@ rule get_stat:
         python /home/miaocj/docker_dir/kNN-overlap-finder/workflow/scripts/generate_evalutate.py {input.neighbor_overlap_sizes} {output.stat}
         python /home/miaocj/docker_dir/kNN-overlap-finder/workflow/scripts/generate_time_stat.py {input.log} {output.time_stat}
         """
-
+        
 # rule get_neighbors_meta:
 #     input:
 #         ref_tax="data/feature_matrix/metagenome/{data_type}/{platform}/{encoding}/ref_read_tax.json.gz",
@@ -538,6 +544,12 @@ rule get_stat:
 #         "scripts/metagenome_kNN.smk.py"
 
 # ----------------------------------------------------------------------------------------------------
+
+rule test_srp_params:
+    input:
+        expand("data/evaluation64/CHM13/chr1_248M/real_cyclone/kmer_k11/dim_SRP_{config}/NNDescent_Cosine_SparseRP_3000d_IDF_integral_stat.tsv",
+        config=['default','config1','config2','config3'])
+
 rule test_minimizer_small_region:
     input:
         expand("data/evaluation64/CHM13/{region}/real_cyclone/{encode}/Exact_Cosine_None_TF-IDF_integral_stat.tsv",
@@ -558,7 +570,7 @@ rule test_k:
 rule test_n1:
     input:
         expand("data/evaluation64/CHM13/chr1_248M/real_cyclone/kmer_k16/NNDescent_Cosine_SparseRP_3000d_IDF_n{n_neighbors}_nn_time.json",
-        n_neighbors=[2,6,10,14,16])
+        n_neighbors=[2,4,6,8,10,14,16])
 
 
 rule PQ_PT2:

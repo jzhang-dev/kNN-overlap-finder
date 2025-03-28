@@ -32,6 +32,7 @@ def get_metadata(fasta_gz_file,paf_gz_file) -> pd.DataFrame:
                     max_values[query_id] = columns
             else:  
                 continue
+    print("Finding every reads' largest alignment, done")
     pass_reads = []
     with gzip.open(fasta_gz_file, "rt") as handle:
         select_num,aligned_num,select_length,aligned_read_length = [0,0,0,0]
@@ -44,7 +45,7 @@ def get_metadata(fasta_gz_file,paf_gz_file) -> pd.DataFrame:
                 pass_reads.append(">%s\n%s\n"%(record.id,record.seq))
                 select_num += 1
                 select_length += int(columns[1])
-                read_sequences.append(record.seq)                                                                                                                                                                                                                 
+                read_sequences.append(record.seq)      
                 read_names.append(record.id)
                 strands.append(columns[4])
                 read_lengths.append(columns[1])
@@ -52,6 +53,7 @@ def get_metadata(fasta_gz_file,paf_gz_file) -> pd.DataFrame:
                 end_positions.append(columns[8])
                 chromosomes.append(columns[5])
 
+    print("Filter reads fit the standard, done")
     metadata = pd.DataFrame(
         dict(
             read_name=read_names,
@@ -62,31 +64,23 @@ def get_metadata(fasta_gz_file,paf_gz_file) -> pd.DataFrame:
             reference_end=end_positions,
         )
     )
-    reads_stat = pd.DataFrame(
-        dict(
-        select_num=select_num,
-        select_length=select_length,
-        aligned_num=aligned_num,
-        aligned_length=aligned_read_length,
-        percentage_num_of_select=select_num/aligned_num,
-        percentage_len_of_select=select_length/aligned_read_length,
-        ),index=[0]
-    ).T
-    return metadata,reads_stat,pass_reads
+    print("generate read info table, done")
+    return metadata,pass_reads
 
 
 def main(snakemake: "SnakemakeContext"):
     fasta_file = snakemake.input["fasta_aligned"]
     paf_file = snakemake.input["paf"]
+
     output_tsv_file = snakemake.output["tsv"]
-    output_stat_file = snakemake.output["stat"]
     fasta = snakemake.output["fasta"]
-    metadata,read_stat,pass_reads = get_metadata(fasta_file,paf_file)
-    
+
+    metadata,pass_reads = get_metadata(fasta_file,paf_file)
+    print('Starting write in')
     ## output writing
     metadata.to_csv(output_tsv_file, sep="\t", index=False)
-    read_stat.to_csv(output_stat_file,sep="\t")
     joined_string = ''.join(pass_reads)  
+    print('Starting write in fasta file')
     with gzip.open(fasta, 'wt') as file:  
         file.write(joined_string)  
 if __name__ == "__main__":

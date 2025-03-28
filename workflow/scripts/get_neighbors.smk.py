@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import scipy as sp
 import time
+import argparse,math
 
 sys.path.append("scripts")
 sys.path.append("../../scripts")
@@ -18,25 +19,48 @@ from nearest_neighbors import (
 )
 from evaluate import NearestNeighborsConfig, compute_nearest_neighbors
 
-
-
 MAX_SAMPLE_SIZE = int(1e9)
 COVERAGE_DEPTH = 20
 
-time_path = sys.argv[1]
-paf_path = sys.argv[2]
-npz_path = sys.argv[3]
-tsv_path = sys.argv[4]
-json_path = sys.argv[5]
-nbr_path = sys.argv[6]
-method = sys.argv[7]
-if len(sys.argv) > 8:
-    ANN_parameter_file = sys.argv[8]
+parser = argparse.ArgumentParser(description="Get neighbors using different method and parameters")
+parser.add_argument("--input",  nargs='+', required=True, 
+                   help="muitiple input files")
+parser.add_argument("--output", nargs='+', required=True, 
+                   help="muitiple output files")
+parser.add_argument("--method", type=str, required=True,
+                   help="method for fing neighbors")
+parser.add_argument("--ann-parameter", type=str, required=False)
+parser.add_argument("--dim-parameter", type=str, required=False)
+parser.add_argument("--n-neighbors", type=int, default=20, required=False)
+
+args = parser.parse_args()
+
+npz_path = args.input[0]
+json_path = args.input[1]
+tsv_path = args.input[2]
+paf_path = args.input[3]
+
+nbr_path = args.output[0]
+time_path = args.output[1]
+
+method = args.method
+
+if args.ann_parameter:
+    ANN_parameter_file = args.ann_parameter
     with open(ANN_parameter_file, 'r') as f:
         ANN_parameter = json.load(f)
-    print(f'Params: {ANN_parameter}')
+    print(f'ANN Params: {ANN_parameter}')
 else:
     ANN_parameter = {}
+
+if args.dim_parameter:
+    dim_parameter_file = args.dim_parameter
+    with open(dim_parameter_file, 'r') as f:
+        dim_parameter = json.load(f)
+    print(f'Dimension reductiom params: {dim_parameter}')
+else:
+    dim_parameter = {}
+    
 meta_df = pd.read_table(tsv_path).iloc[:MAX_SAMPLE_SIZE, :].reset_index()
 read_indices = {read_name: read_id for read_id, read_name in meta_df['read_name'].items()}
 feature_matrix = sp.sparse.load_npz(npz_path)[meta_df.index, :]
@@ -47,16 +71,13 @@ with gzip.open(json_path, "rt") as f:
 
 feature_weights = {i: 1 for i in range(feature_matrix.shape[1])}
 
-fig, ax = plt.subplots(figsize=(8, 2.5))
-ax.hist([len(x) for x in read_features.values()], bins=100)
-ax.set_xlim(left=0)
-ax.set_xlabel("Number of features per read")
-ax.set_ylabel("Number of reads")
-ax.grid(color='k', alpha=0.1)
-
 kw = dict(data=feature_matrix)
 max_bucket_size = COVERAGE_DEPTH * 1.5
-max_n_neighbors = COVERAGE_DEPTH
+max_n_neighbors = args.n_neighbors
+if 'density_base_auto' in dim_parameter:
+    real_dim_parameter = {'density':(1/math.sqrt(feature_matrix.shape[1]))*int(dim_parameter['density_base_auto'])}
+else:
+    real_dim_parameter = dim_parameter
 
 print(method)
 if method == 'Minimap2':
@@ -76,7 +97,7 @@ elif 'Exact' in method and 'chr1_248M' in tsv_path:
         read_features=read_features,
     )
 else:
-    config = parse_string_to_config(method,ANN_parameter)
+    config = parse_string_to_config(method,ANN_parameter,real_dim_parameter)
     neighbor_indices, elapsed_time, peak_memory = compute_nearest_neighbors(
         data=feature_matrix,
         config=config,

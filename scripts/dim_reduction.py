@@ -183,8 +183,8 @@ class Split_GRP(_DimensionReduction):
 
 class SparseRandomProjection(_DimensionReduction):
     def transform(
-        self, data: csr_matrix | NDArray, n_dimensions: int):
-        reducer = random_projection.SparseRandomProjection(n_components=n_dimensions)
+        self, data: csr_matrix | NDArray, n_dimensions: int,density: float ='auto'):
+        reducer = random_projection.SparseRandomProjection(n_components=n_dimensions, density=density)
         embedding = reducer.fit_transform(data)
         _embedding = embedding.toarray()
         return _embedding
