@@ -16,27 +16,23 @@ import sharedmem
 sys.path.append("scripts")
 sys.path.append("../../scripts")
 
-from data_io import is_fwd_id, get_fwd_id, get_sibling_id
 from graph import OverlapGraph, GenomicInterval, get_overlap_statistics, remove_false_edges,get_neighbor_overlap_bases,get_precision
-from truth import get_overlaps
-from evaluate import NearestNeighborsConfig, mp_compute_nearest_neighbors
 
 MAX_SAMPLE_SIZE = int(1e9)
 COVERAGE_DEPTH = 20
-
-sample = snakemake.wildcards['sample']
-dataset = snakemake.wildcards['platform']
-region = snakemake.wildcards['region']
-method = snakemake.wildcards['method']
-
-npz_path = snakemake.input['feature_matrix']
-ref_graph_path = snakemake.input['ref_graph']
-tsv_path = snakemake.input['metadata']
-json_path = snakemake.input['read_features']
-nbr_path = snakemake.input['nbr_indice']
-df_file= snakemake.output['integral_stat']
-
+nbr_path = sys.argv[1]
 filename = os.path.abspath(nbr_path)
+if 'kmer_k' in filename:
+    p1 =r'(.+)evaluation[^/]*/(.+)(kmer_k\d+\/).+'
+elif 'minimizer' in filename:
+    p1 =r'(.+)evaluation[^/]*/(.+)(minimizer_k\d+_w\d+\/).+'
+str1 = re.search(p1,filename).group(1)
+str2 = re.search(p1,filename).group(2)
+str3 = re.search(p1,filename).group(3)
+tsv_path = str1+'feature_matrix/'+str2+str3+'metadata.tsv.gz'
+ref_graph_path = str1+'regional_reads/'+str2+'reference_graph.gpickle'
+df_file= nbr_path[:-14]+'integral_stat.tsv'
+
 pattern  = r'data/([^/]+)/([^/]+)/([^/]+)/([^/]+)/([^/]+)/(.+)_nbr_matrix'
 thread = re.search(pattern,filename).group(1)
 sample = re.search(pattern,filename).group(2)
@@ -74,6 +70,7 @@ for k in k_values:
     overlap_sizes = get_neighbor_overlap_bases(query_graph=graph, reference_graph=reference_graph)
     mean_overlap_sizes.append(sum(overlap_sizes)/len(overlap_sizes))
     precisions.append(1-(overlap_sizes.count(0)/len(overlap_sizes)))
+    print(1-(overlap_sizes.count(0)/len(overlap_sizes)))
 
 di = {
     'thread':thread,

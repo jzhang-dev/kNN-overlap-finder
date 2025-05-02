@@ -25,21 +25,18 @@ def extract_groups(taxonomy):
 
 def process_batch(batch_id, db_part_path, kmer_dict, id_dict, gtdb_taxonomy):
     # 构建特征矩阵
-    feature_matrix, read_features, metadata = encode_reads(
-        db_part_path, kmer_dict, id_dict, gtdb_taxonomy, 16
+    feature_matrix, metadata = encode_reads(
+        db_part_path, kmer_dict, id_dict, gtdb_taxonomy, 11
     )
     print(f'feature matrix shape: {feature_matrix.shape}')
     print(f'Batch {batch_id}: feature_matrix building finished')
 
     # 定义输出文件路径
-    output_npz_file = f'/home/miaocj/docker_dir/kNN-overlap-finder/data/feature_matrix/metagenome/GTDB/all_rp/feature_matrix_{batch_id}.npz'
-    output_json_file = f'/home/miaocj/docker_dir/kNN-overlap-finder/data/feature_matrix/metagenome/GTDB/all_rp/read_features_{batch_id}.json.gz'
-    output_tsv_file = f'/home/miaocj/docker_dir/kNN-overlap-finder/data/feature_matrix/metagenome/GTDB/all_rp/metadata_{batch_id}.tsv.gz'
+    output_npz_file = f'/home/miaocj/docker_dir/kNN-overlap-finder/data/feature_matrix/metagenome/GTDB/all_rp/kmer_k11/feature_matrix_{batch_id}.npz'
+    output_tsv_file = f'/home/miaocj/docker_dir/kNN-overlap-finder/data/feature_matrix/metagenome/GTDB/all_rp/kmer_k11/metadata_{batch_id}.tsv.gz'
 
     # 保存文件
     sp.save_npz(output_npz_file, feature_matrix)
-    with gzip.open(output_json_file, "wt") as f:
-        json.dump(read_features, f)
     metadata.to_csv(output_tsv_file, index=False, sep="\t")
     print(f'Batch {batch_id}: files saved successfully')
 

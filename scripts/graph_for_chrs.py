@@ -15,7 +15,7 @@ from align import _PairwiseAligner, run_multiprocess_alignment, AlignmentResult
 
 @dataclass
 class GenomicInterval:
-    chromosome: str
+    chromosome: set
     start: int
     end: int
 
@@ -41,7 +41,7 @@ def get_overlap_candidates(
     _read_ids = np.array(read_ids)
     overlap_candidates = []
     for i1, row in enumerate(neighbor_indices):
-        k1 = _read_ids[i1]
+        k1 = _read_ids[row[0]]
         row = row[(row >= 0) & (row != row[0])]
         for neighbor_order, i2 in enumerate(row[:n_neighbors]):
             overlap_candidates.append((k1, _read_ids[i2], {"neighbor_order": neighbor_order}))
@@ -143,19 +143,10 @@ class OverlapGraph(nx.Graph):
                     if graph.has_edge(read_0, read_1):
                         continue
                     overlap_size = max(0, min(end_0, end_1) - max(start_0, start_1))
-                    left_overhang_size = abs(start_0 - start_1)
-                    left_overhang_node = read_0 if start_0 <= start_1 else read_1
-                    right_overhang_size = abs(end_0 - end_1)
-                    right_overhang_node = read_0 if end_0 >= end_1 else read_1
                     graph.add_edge(
                         read_0,
                         read_1,
-                        overlap_size=overlap_size,
-                        left_overhang_size=left_overhang_size,
-                        left_overhang_node=left_overhang_node,
-                        right_overhang_size=right_overhang_size,
-                        right_overhang_node=right_overhang_node,
-                        redundant=True,
+                        overlap_size=overlap_size
                     )
             if len(parent_reads) == 1:
                 contained_reads.add(read_0)
@@ -165,36 +156,6 @@ class OverlapGraph(nx.Graph):
         for read in contained_reads:
             graph.nodes[read]["contained"] = True
 
-        # Identify non-redundant overlaps
-        min_overhang_size = []
-        for node_0 in graph.nodes():
-            nearest_left_node = None
-            min_left_overhang = float("inf")
-            nearest_right_node = None
-            min_right_overhang = float("inf")
-            for node_1, data in graph[node_0].items():
-                if (
-                    data["left_overhang_node"] == node_1
-                    and data["left_overhang_size"] < min_left_overhang
-                ):
-                    min_left_overhang = data["left_overhang_size"]
-                    nearest_left_node = node_1
-                if (
-                    data["right_overhang_node"] == node_1
-                    and data["right_overhang_size"] < min_right_overhang
-                ):
-                    min_right_overhang = data["right_overhang_size"]
-                    nearest_right_node = node_1
-            min_overhang_size.append(min_left_overhang)
-            min_overhang_size.append(min_right_overhang)
-            if nearest_left_node is not None:
-                graph[node_0][nearest_left_node]["redundant"] = False
-            if nearest_right_node is not None:
-                graph[node_0][nearest_right_node]["redundant"] = False
-        import math
-        filtered_data = [x for x in min_overhang_size if not math.isinf(x)]
-        mean_overhang_size = sum(filtered_data)/len(filtered_data)
-        print(mean_overhang_size)
         return graph
 
     def align_edges(
@@ -231,72 +192,4 @@ def remove_false_edges(graph, reference_graph):
             false_edges.append((u, v))
     graph.remove_edges_from(false_edges)
 
-def get_neighbor_overlap_bases(query_graph: nx.Graph, reference_graph: nx.Graph):
-    overlap_size_bases = []
-    for (node_0,node_1) in query_graph.edges():
-        if (node_0,node_1) in reference_graph.edges():
-            edge_data = reference_graph.get_edge_data(node_0, node_1)
-            overlap_size = edge_data["overlap_size"]
-            overlap_size_bases.append(overlap_size)
-        else:
-            overlap_size_bases.append(0)
-    return overlap_size_bases
-    
-def get_precision(query_graph: nx.Graph, reference_graph: nx.Graph):
-    reference_edges = set(
-        tuple(sorted((node_1, node_2))) for node_1, node_2 in reference_graph.edges
-    )
-    query_edges = set(
-        tuple(sorted((read_1, read_2))) for read_1, read_2 in query_graph.edges
-    )
-    true_positive_edges = query_edges & reference_edges
-    precision = len(true_positive_edges) / len(query_edges)
-    result = dict(
-        precision_per_rank=precision,
-    )
-    return result
 
-
-def get_overlap_statistics(query_graph: nx.Graph, reference_graph: nx.Graph):
-    reference_edges = set(
-        tuple(sorted((node_1, node_2))) for node_1, node_2 in reference_graph.edges
-    )
-    nr_reference_edges = set(
-        tuple(sorted((node_1, node_2)))
-        for node_1, node_2, data in reference_graph.edges(data=True)
-        if not data["redundant"]
-    )
-    query_edges = set(
-        tuple(sorted((read_1, read_2))) for read_1, read_2 in query_graph.edges
-    )
-    true_positive_edges = query_edges & reference_edges
-    nr_true_positive_edges = query_edges & nr_reference_edges
-
-    recall = len(true_positive_edges) / len(reference_edges)
-    nr_recall = len(nr_true_positive_edges) / len(nr_reference_edges)
-
-    precision = len(true_positive_edges) / len(query_edges)
-    nr_precision = len(nr_true_positive_edges) / len(query_edges)
-
-    query_graph = query_graph.copy()
-    remove_false_edges(query_graph, reference_graph)
-    singleton_count = len([node for node in query_graph if len(query_graph[node]) <= 1])
-    singleton_fraction = singleton_count / len(query_graph.nodes)
-    component_sizes = [len(x) for x in nx.connected_components(query_graph)]
-    component_sizes.sort(reverse=True)
-    component_sizes = np.array(component_sizes)
-    node_count = len(query_graph.nodes)
-    N50 = component_sizes[component_sizes.cumsum() >= node_count * 0.5].max()
-    continuity = N50/(node_count/2)
-    result = dict(
-        precision=precision,
-        nr_precision=nr_precision,
-        recall=recall,
-        nr_recall=nr_recall,
-        singleton_count=singleton_count,
-        singleton_fraction=singleton_fraction,
-        component_sizes=len(component_sizes),
-        N50=N50,
-        continuity=continuity,
-    )
-    return result

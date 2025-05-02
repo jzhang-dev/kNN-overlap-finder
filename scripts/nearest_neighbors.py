@@ -72,6 +72,7 @@ class ExactNearestNeighbors(_NearestNeighbors):
         )
 
         nbrs.fit(data)
+        print('search model finished')
         if sample_query_number != None:
             random_row_indices = np.random.choice(data.shape[0], size=sample_query_number, replace=False)
             sampled_matrix = data[random_row_indices, :]
@@ -88,8 +89,12 @@ class NNDescent(_NearestNeighbors):
         metric="cosine",
         n_neighbors: int = 20,
         *,
+        index_n_neighbors:int=50,
         n_trees: int| None = 300,
         leaf_size: int| None = 200,
+        n_iters: int |None = None,
+        diversify_prob: float|None=1,
+        pruning_degree_multiplier:float|None=1.5,
         low_memory: bool = True,
         n_jobs: int | None = 64,
         seed: int | None = 683985,
@@ -98,15 +103,19 @@ class NNDescent(_NearestNeighbors):
         index = pynndescent.NNDescent(
             data,
             metric=metric,
-            n_neighbors=n_neighbors,
+            n_neighbors=index_n_neighbors,
             n_trees=n_trees,
             leaf_size=leaf_size,
+            n_iters=n_iters,
+            diversify_prob=diversify_prob,
+            pruning_degree_multiplier=pruning_degree_multiplier,
             low_memory=low_memory,
             n_jobs=n_jobs,
             random_state=seed,
             verbose=verbose,
         )
-        nbr_indices, _ = index.neighbor_graph  # type: ignore
+        _nbr_indices, _ = index.neighbor_graph
+        nbr_indices = _nbr_indices[:,:n_neighbors]
         return nbr_indices
 
 
@@ -117,7 +126,7 @@ class HNSW(_NearestNeighbors):
         n_neighbors: int,
         metric: Literal["euclidean", "cosine"] = "euclidean",
         *,
-        threads: int | None = 64,
+        n_jobs: int | None = 64,
         M: int = 512,
         ef_construction: int = 200,
         ef_search: int = 50,
@@ -137,8 +146,8 @@ class HNSW(_NearestNeighbors):
 
         # Initialize the HNSW index
         p = hnswlib.Index(space=space, dim=data.shape[1])
-        if threads is not None:
-            p.set_num_threads(threads)
+        if n_jobs is not None:
+            p.set_num_threads(n_jobs)
         p.init_index(max_elements=data.shape[0], ef_construction=ef_construction, M=M)
         ids = np.arange(data.shape[0])
         p.add_items(data, ids)
@@ -395,6 +404,7 @@ class WeightedLowHash(LowHash):
         max_bucket_size=float("inf"),
         min_cooccurence_count=1,
         *,
+        n_jobs:int| None =None,
         seed=1,
         use_weights=True,
         verbose=True,
@@ -419,139 +429,6 @@ class WeightedLowHash(LowHash):
         )
         return nbr_matrix
 
-
-# @njit(parallel=True)
-# def _argpartition(arr, k, axis=0):
-#     """
-#     This function works like numpy.argpartition,
-#     but only returns the first k indices.
-#     This function is designed for Numba,
-#     as numpy.argpartition is not fully supported in Numba.
-
-#     >>> a = np.array([[1, 2, 3], [3,0,1], [3, 3, 1], [5, 0, 0]])
-#     >>> _argpartition(a, 2, axis=0)
-#     array([[0, 3, 3],
-#            [2, 1, 2]])
-#     """
-#     if axis == 0:
-#         result = np.empty((k, arr.shape[1]), dtype=np.int64)
-#         for i in prange(arr.shape[1]):
-#             partitioned_indices = np.argpartition(arr[:, i], k)[:k]
-#             result[:, i] = partitioned_indices
-#     elif axis == 1:
-#         result = np.empty((arr.shape[0], k), dtype=np.int64)
-#         for i in prange(arr.shape[0]):
-#             partitioned_indices = np.argpartition(arr[i, :], k)[:k]
-#             result[i, :] = partitioned_indices
-#     else:
-#         raise ValueError("axis must be 0 or 1")
-#     return result
-
-
-# class JITWeightedLowHash(WeightedLowHash):
-#     # This is not faster. Why?
-
-#     @staticmethod
-#     def _get_random_numbers(seed: int, feature_count: int, dimension_count: int):
-#         rng = np.random.default_rng(seed)
-#         beta = rng.uniform(0, 1, (feature_count, dimension_count))
-#         x = rng.uniform(0, 1, (feature_count, dimension_count))
-#         u1 = rng.uniform(0, 1, (feature_count, dimension_count))
-#         u2 = rng.uniform(0, 1, (feature_count, dimension_count))
-#         return beta, x, u1, u2
-
-
-#     @staticmethod
-#     @njit
-#     def _get_lowhash_positions(
-#         weights: ndarray,
-#         feature_indices: ndarray,
-#         dimension_count: int,
-#         lowhash_count: int,
-#         beta: ndarray,
-#         x: ndarray,
-#         u1: ndarray,
-#         u2: ndarray,
-#     ) -> ndarray:
-#         gamma = -np.log(np.multiply(u1[feature_indices, :], u2[feature_indices, :]))
-#         t_matrix = np.floor(
-#             np.divide(
-#                 np.repeat(np.log(weights), dimension_count).reshape(
-#                     -1, dimension_count
-#                 ),
-#                 gamma,
-#             )
-#             + beta[feature_indices, :]
-#         )
-#         y_matrix = np.exp(np.multiply(gamma, t_matrix - beta[feature_indices, :]))
-#         a_matrix = np.divide(
-#             -np.log(x[feature_indices, :]),
-#             np.divide(y_matrix, u1[feature_indices, :]),
-#         )
-#         lowhash_positions = _argpartition(a_matrix, lowhash_count, axis=0)
-#         return lowhash_positions
-
-#     def _pcws_low_hash(
-#         self,
-#         data: csr_matrix | np.ndarray,
-#         lowhash_fraction: float | None = None,
-#         lowhash_count: int | None = None,
-#         repeats=1,
-#         *,
-#         seed=1,
-#         use_weights=True,
-#         verbose=True,
-#     ) -> csr_matrix:
-#         data = data.T.copy()  # rows for features; columns for instances; this will be a sparse CSC matrix
-#         if not use_weights:
-#             data[data > 0] = 1
-#         feature_count, sample_count = data.shape
-#         lowhash_buckets = sparse.dok_matrix(
-#             (feature_count * repeats, sample_count), dtype=np.bool_
-#         )
-
-#         dimension_count = repeats
-#         # fingerprints_k = np.zeros((instance_num, dimension_num))
-
-#         beta, x, u1, u2 = self._get_random_numbers(
-#             seed=seed, feature_count=feature_count, dimension_count=dimension_count
-#         )
-
-#         for j_sample in range(0, sample_count):
-#             feature_indices = sparse.find(data[:, j_sample] > 0)[0]
-#             hash_count = feature_indices.shape[0]
-#             sample_lowhash_count = self._get_lowhash_count(
-#                 hash_count=hash_count,
-#                 lowhash_fraction=lowhash_fraction,
-#                 lowhash_count=lowhash_count,
-#             )
-#             weights = data[feature_indices, j_sample].todense()
-#             lowhash_positions = self._get_lowhash_positions(
-#                 weights=weights,
-#                 feature_indices=feature_indices,
-#                 dimension_count=dimension_count,
-#                 lowhash_count=sample_lowhash_count,
-#                 beta=beta,
-#                 x=x,
-#                 u1=u1,
-#                 u2=u2,
-#             )
-#             lowhash_features = feature_indices[lowhash_positions]
-#             bucket_indices = []
-#             for k in range(repeats):
-#                 features = lowhash_features[:, k]
-#                 bucket_indices.append(features + k * feature_count)
-
-#             lowhash_buckets[np.concatenate(bucket_indices), j_sample] = 1
-
-#             if verbose and j_sample % 1_000 == 0:
-#                 print(j_sample, end=" ")
-#         if verbose:
-#             print("")
-#         lowhash_buckets = sparse.csr_matrix(lowhash_buckets)
-#         return lowhash_buckets
-
-
 class PAFNearestNeighbors(_NearestNeighbors):
     def get_neighbors(
         self,
@@ -564,7 +441,13 @@ class PAFNearestNeighbors(_NearestNeighbors):
     ) -> np.ndarray:
         # Calculate cumulative alignment lengths
         alignment_lengths = collections.defaultdict(collections.Counter)
+        i=0
         for record in parse_paf_file(paf_path):
+            ##recorde process
+            i+=1
+            if i % 10000000 == 0:
+                print(i)
+                
             i1 = read_indices.get(record.query_name)
             i2 = read_indices.get(record.target_name)
             if i1 is None or i2 is None:
@@ -581,11 +464,14 @@ class PAFNearestNeighbors(_NearestNeighbors):
         if len(alignment_lengths) == 0:
             warn(f"No overlaps found from {paf_path}")
 
+        print('alignment_lengths generation done')
         # Construct neighbor matrix
         n_rows = data.shape[0]
         nbr_matrix = np.empty((n_rows, n_neighbors), dtype=np.int64)
         nbr_matrix[:, :] = -1
         for i in range(n_rows):
+            if i % 10000 ==0:
+                print(i)
             row_nbr_dict = {
                 j: length
                 for j, length in alignment_lengths[i].items()
@@ -595,6 +481,61 @@ class PAFNearestNeighbors(_NearestNeighbors):
                 sorted(row_nbr_dict, key=lambda x: row_nbr_dict[x], reverse=True)
             )[:n_neighbors]
             nbr_matrix[i, : len(neighbors)] = neighbors
+        return nbr_matrix
+
+class MHAPNearestNeighbors(_NearestNeighbors):
+    def get_neighbors(
+        self,
+        data: csr_matrix | np.ndarray,
+        n_neighbors: int,
+        paf_path: str,
+        read_indices: Mapping[str, int],
+        *,
+        max_error_percentage: int = 0.5,
+    ) -> np.ndarray:
+        # Calculate cumulative alignment lengths
+        error = collections.defaultdict(collections.Counter)
+        i=0
+        with open(paf_path,'rt') as f:
+            for line in f:
+                li = line.strip().split(' ')
+                i1 = read_indices.get(li[0])
+                i2 = read_indices.get(li[1])
+                if li[4] == 1:
+                    i1 += 1
+                if li[8] == 1:
+                    i2 += 1
+                if  float(li[2]) < 0.3:
+                    error_per = float(li[3])
+                    error[i1][i2] = error_per
+                    error[i2][i1] = error_per
+                    i1, i2 = get_sibling_id(i1), get_sibling_id(i2)
+                    error[i1][i2] = error_per
+                    error[i2][i1] = error_per
+
+        n_rows = data.shape[0]
+        nbr_matrix = np.empty((n_rows, n_neighbors), dtype=np.int64)
+        nbr_matrix[:, :] = -1
+        for i in range(n_rows):
+            row_nbr_dict = {
+                j: error_per
+                for j, error_per in error[i].items()
+            }
+            neighbors = list( 
+                sorted(row_nbr_dict, key=lambda x: row_nbr_dict[x], reverse=True)
+            )[:n_neighbors]
+            nbr_matrix[i, : len(neighbors)] = neighbors
+
+        # ## stat 
+        # error_0 = []
+        # for read in range(0,n_rows):
+        #     i=0
+        #     for j, length in error[read].items():
+        #         if length == 0:
+        #             i +=1
+        #     error_0.append(i)
+        # error_num_stat = sum([freq for num,freq in collections.Counter(error_0).items() if num<=20])
+        # print(f'reads number whose error rate = 0 neigbor number < 20 in all reads percentage: {error_num_stat/n_rows}')
         return nbr_matrix
 
 class RPForest(_NearestNeighbors):
@@ -624,10 +565,10 @@ class ProductQuantization(_NearestNeighbors):
         m=64,
         n_bits=8,
         seed=455390,
-        threads: int = 64
+        n_jobs: int = 64
     ) -> np.ndarray:
 
-        faiss.omp_set_num_threads(threads)
+        faiss.omp_set_num_threads(n_jobs)
         if sparse.issparse(data):
             data = data.toarray()
             #raise TypeError("ProductQuantization does not support sparse arrays.")
@@ -668,10 +609,10 @@ class IVFProductQuantization(_NearestNeighbors):
         n_bits=8, 
         n_probe=100,
         seed=455390,
-        threads: int = 64
+        n_jobs: int = 64
     ) -> np.ndarray:
         
-        faiss.omp_set_num_threads(threads)
+        faiss.omp_set_num_threads(n_jobs)
 
         if sparse.issparse(data):
             raise TypeError("ProductQuantization does not support sparse arrays.")
@@ -728,8 +669,9 @@ class SimHash(_NearestNeighbors):
         self,
         data: csr_matrix | np.ndarray,
         n_neighbors: int,
-        repeats=500,
+        repeats=3000,
         seed=20141025,
+        n_jobs:int| None =None,
     ) -> np.ndarray:
         assert data.shape is not None
         kmer_num = data.shape[1]

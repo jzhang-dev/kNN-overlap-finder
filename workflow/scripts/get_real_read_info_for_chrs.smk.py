@@ -10,9 +10,9 @@ import scipy.sparse as sp
 from collections import Counter
 import numpy as np
 import pandas as pd
+from isal import igzip
 
-def get_metadata(fasta_gz_file,paf_gz_file) -> pd.DataFrame:
-    read_sequences = []
+def get_metadata(fasta_gz_file,paf_gz_file,fasta) -> pd.DataFrame:
     read_names = []
     strands = []
     read_lengths = []
@@ -33,25 +33,20 @@ def get_metadata(fasta_gz_file,paf_gz_file) -> pd.DataFrame:
             else:  
                 continue
     print("Finding every reads' largest alignment, done")
-    pass_reads = []
-    with gzip.open(fasta_gz_file, "rt") as handle:
-        select_num,aligned_num,select_length,aligned_read_length = [0,0,0,0]
+    with igzip.open(fasta_gz_file, "rt") as handle,open(fasta, 'wt') as out_file:
         for record in SeqIO.parse(handle, "fasta"):
             assert record.id not in read_names, f"{record.id} is a duplicate read, check fasta file to remove duplicate reads."
-            aligned_num += 1
             columns = max_values[record.id]
-            aligned_read_length += int(columns[1])
             if int(columns[9])/int(columns[1]) > 0.5:
-                pass_reads.append(">%s\n%s\n"%(record.id,record.seq))
-                select_num += 1
-                select_length += int(columns[1])
-                read_sequences.append(record.seq)      
                 read_names.append(record.id)
                 strands.append(columns[4])
                 read_lengths.append(columns[1])
                 start_positions.append(columns[7])
                 end_positions.append(columns[8])
                 chromosomes.append(columns[5])
+                out_file.write(f">{record.id}\n{record.seq}\n") ##修改为直接写入文件，加快速度
+            if len(chromosomes)%10000 == 0:
+                print(len(chromosomes))
 
     print("Filter reads fit the standard, done")
     metadata = pd.DataFrame(
@@ -65,7 +60,7 @@ def get_metadata(fasta_gz_file,paf_gz_file) -> pd.DataFrame:
         )
     )
     print("generate read info table, done")
-    return metadata,pass_reads
+    return metadata
 
 
 def main(snakemake: "SnakemakeContext"):
@@ -75,13 +70,11 @@ def main(snakemake: "SnakemakeContext"):
     output_tsv_file = snakemake.output["tsv"]
     fasta = snakemake.output["fasta"]
 
-    metadata,pass_reads = get_metadata(fasta_file,paf_file)
+    metadata = get_metadata(fasta_file,paf_file,fasta)
+
     print('Starting write in')
     ## output writing
     metadata.to_csv(output_tsv_file, sep="\t", index=False)
-    joined_string = ''.join(pass_reads)  
-    print('Starting write in fasta file')
-    with gzip.open(fasta, 'wt') as file:  
-        file.write(joined_string)  
+ 
 if __name__ == "__main__":
     main(snakemake)

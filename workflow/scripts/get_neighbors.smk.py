@@ -15,7 +15,8 @@ sys.path.append("../../scripts")
 from str2config import parse_string_to_config
 from nearest_neighbors import (
     ExactNearestNeighbors,
-    PAFNearestNeighbors
+    PAFNearestNeighbors,
+    MHAPNearestNeighbors
 )
 from evaluate import NearestNeighborsConfig, compute_nearest_neighbors
 
@@ -32,26 +33,33 @@ parser.add_argument("--method", type=str, required=True,
 parser.add_argument("--ann-parameter", type=str, required=False)
 parser.add_argument("--dim-parameter", type=str, required=False)
 parser.add_argument("--n-neighbors", type=int, default=20, required=False)
+parser.add_argument("--threads", type=int, default=64, required=False)
 
 args = parser.parse_args()
 
-npz_path = args.input[0]
-json_path = args.input[1]
-tsv_path = args.input[2]
-paf_path = args.input[3]
-
+if len(args.input) == 4:
+    npz_path = args.input[0]
+    json_path = args.input[1]
+    tsv_path = args.input[2]
+    paf_path = args.input[3]
+else:
+    npz_path = args.input[0]
+    json_path = args.input[1]
+    tsv_path = args.input[2]
 nbr_path = args.output[0]
 time_path = args.output[1]
 
 method = args.method
 
+ANN_threads_param = {'n_jobs':args.threads}
 if args.ann_parameter:
     ANN_parameter_file = args.ann_parameter
     with open(ANN_parameter_file, 'r') as f:
         ANN_parameter = json.load(f)
-    print(f'ANN Params: {ANN_parameter}')
+        ANN_parameter.update(ANN_threads_param)
 else:
-    ANN_parameter = {}
+    ANN_parameter = ANN_threads_param
+print(f'ANN Params: {ANN_parameter}')
 
 if args.dim_parameter:
     dim_parameter_file = args.dim_parameter
@@ -60,16 +68,10 @@ if args.dim_parameter:
     print(f'Dimension reductiom params: {dim_parameter}')
 else:
     dim_parameter = {}
-    
-meta_df = pd.read_table(tsv_path).iloc[:MAX_SAMPLE_SIZE, :].reset_index()
-read_indices = {read_name: read_id for read_id, read_name in meta_df['read_name'].items()}
-feature_matrix = sp.sparse.load_npz(npz_path)[meta_df.index, :]
 
-with gzip.open(json_path, "rt") as f:
-    read_features = json.load(f)
-    read_features = {i: read_features[i] for i in meta_df.index}
-
-feature_weights = {i: 1 for i in range(feature_matrix.shape[1])}
+print('start loading feature matrix...')
+feature_matrix = sp.sparse.load_npz(npz_path)
+print('feature matrix loading done!')
 
 kw = dict(data=feature_matrix)
 max_bucket_size = COVERAGE_DEPTH * 1.5
@@ -80,30 +82,37 @@ else:
     real_dim_parameter = dim_parameter
 
 print(method)
-if method == 'Minimap2':
+if method in ['Minimap2','MHAP']:
     elapsed_time = {}
     start_time = time.time()
-    neighbor_indices = PAFNearestNeighbors().get_neighbors(
-            data=feature_matrix, n_neighbors=max_n_neighbors, paf_path=paf_path, read_indices=read_indices
-        )
+    meta_df = pd.read_table(tsv_path).iloc[:MAX_SAMPLE_SIZE, :].reset_index()
+    read_indices = {read_name: read_id for read_id, read_name in meta_df['read_name'].items()}
+    if method == 'Minimap2':
+        neighbor_indices = PAFNearestNeighbors().get_neighbors(
+                data=feature_matrix, n_neighbors=max_n_neighbors, paf_path=paf_path, read_indices=read_indices
+            )
+    else:
+        neighbor_indices = MHAPNearestNeighbors().get_neighbors(
+                data=feature_matrix, n_neighbors=max_n_neighbors, paf_path=paf_path, read_indices=read_indices
+            )
     elapsed_time['nearest_neighbors'] = time.time() - start_time
 elif 'Exact' in method and 'chr1_248M' in tsv_path:
     print('For saving time, extract 1w reads as query reads.')
-    config = parse_string_to_config(method,{'sample_query_number':10000})
+    config = parse_string_to_config(method,{'sample_query_number':10000},{})
     neighbor_indices, elapsed_time, peak_memory = compute_nearest_neighbors(
         data=feature_matrix,
         config=config,
         n_neighbors=max_n_neighbors,
-        read_features=read_features,
     )
 else:
     config = parse_string_to_config(method,ANN_parameter,real_dim_parameter)
-    neighbor_indices, elapsed_time, peak_memory = compute_nearest_neighbors(
+    neighbor_indices, elapsed_time, prepro_data, dim_data = compute_nearest_neighbors(
         data=feature_matrix,
         config=config,
         n_neighbors=max_n_neighbors,
-        read_features=read_features,
     )
+    np.savez(nbr_path[:-14]+'dim.npz',dim_data)
+    sp.sparse.save_npz(nbr_path[:-14]+'prepro.npz',prepro_data)
 
 np.savez(nbr_path, neighbor_indices)
 with open(time_path, 'w', encoding='utf-8') as f:

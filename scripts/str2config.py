@@ -2,7 +2,9 @@ from evaluate import NearestNeighborsConfig
 from dim_reduction import SpectralEmbedding, scBiMapEmbedding,GaussianRandomProjection,SparseRandomProjection,SimHash_Dimredu,PCA,isomap,umapEmbedding,Split_GRP
 from nearest_neighbors import ExactNearestNeighbors,PAFNearestNeighbors,SimHash,HNSW,ProductQuantization,NNDescent,WeightedLowHash,IVFProductQuantization
 max_bucket_size = 20
-def parse_string_to_config(input_string: str,nearest_neighbors_parameter: dict, dim_parameter:dict) -> NearestNeighborsConfig:
+def parse_string_to_config(input_string: str,
+                           nearest_neighbors_parameter: dict = {}, 
+                           dim_parameter:dict = {}) -> NearestNeighborsConfig:
     # 将字符串按下划线分割
     mydict = {  
     'Exact':ExactNearestNeighbors,

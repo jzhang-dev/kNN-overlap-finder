@@ -46,7 +46,6 @@ def load_reads(
 
 def finding_kmer(kmer_dict, read_sequences, k):
     row_ind, col_ind, data = [], [], []
-    read_features = []
     for i,seq in enumerate(read_sequences):
         features_i = []
         for p in range(len(seq) - k + 1):
@@ -55,7 +54,6 @@ def finding_kmer(kmer_dict, read_sequences, k):
             if j is None:
                 continue
             features_i.append(j)
-        read_features.append(features_i)
         kmer_counts = collections.Counter(features_i)
         for j, count in kmer_counts.items():
             row_ind.append(i)
@@ -64,7 +62,7 @@ def finding_kmer(kmer_dict, read_sequences, k):
     feature_matrix = sp.csr_matrix(
         (data, (row_ind, col_ind)), shape=(len(read_sequences), len(kmer_dict))
     )
-    return feature_matrix,read_features
+    return feature_matrix
 
 
 def encode_reads(
@@ -81,7 +79,7 @@ def encode_reads(
     read_names, read_orientations, read_sequences = load_reads(db_path=db_path)
     print("reads loading done")
     # Build matrix
-    feature_matrix, read_features = finding_kmer(kmer_dict, read_sequences, k)
+    feature_matrix = finding_kmer(kmer_dict, read_sequences, k)
     print("find kmer done")
     # Build metadata
     rows = []
@@ -99,4 +97,4 @@ def encode_reads(
         )
     metadata = pd.DataFrame(rows)
 
-    return feature_matrix, read_features, metadata
+    return feature_matrix, metadata

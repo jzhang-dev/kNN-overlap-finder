@@ -8,11 +8,27 @@ from dataclasses import dataclass, field
 import numpy as np
 from numpy import ndarray
 import sharedmem
+import re
 
 from nearest_neighbors import _NearestNeighbors, ExactNearestNeighbors
 from dim_reduction import _DimensionReduction, SpectralEmbedding, scBiMapEmbedding
 from graph import OverlapGraph, get_overlap_statistics
 from align import cWeightedSemiglobalAligner, run_multiprocess_alignment
+
+def manual_tf(data:csr_matrix):
+    row_sums = np.sum(data, axis=1)
+    tf_data = data / row_sums.reshape(-1, 1)
+    tf_data = csr_matrix(tf_data) 
+    return tf_data
+
+def manual_idf(data:csr_matrix):
+    binary_matrix = csr_matrix((np.ones_like(data.data), data.indices, data.indptr), shape=data.shape)
+    col_sums = binary_matrix.sum(axis=0).A1
+    N = binary_matrix.shape[0]
+    idf = np.log((N + 1) / (col_sums + 1)) + 1 
+    idf = idf.astype(binary_matrix.dtype)
+    _data = binary_matrix.multiply(idf) 
+    return _data
 
 @dataclass
 class NearestNeighborsConfig:
@@ -30,34 +46,32 @@ class NearestNeighborsConfig:
         peak_memory = {} # TODO
 
         _data: csr_matrix | ndarray = data.copy()
-        
+        start_time = time.time()
+
         if self.tfidf == 'TF':
-            if verbose:
-                print("TF transform.")
+            print("TF transform.")
+            prepro_data = manual_tf(_data)
+        elif self.tfidf == 'binary':
+            prepro_data = csr_matrix((np.ones_like(_data.data), _data.indices, _data.indptr), shape=_data.shape)
+        elif self.tfidf == 'count':
+            prepro_data = _data
         elif self.tfidf == 'IDF':
-            start_time = time.time()
-            if verbose:
-                print("IDF transform.")
-            _data[_data > 0] = 1
-            _data = TfidfTransformer(use_idf=True, smooth_idf=True).fit_transform(_data)
-            elapsed_time['tfidf'] = time.time() - start_time
+            print("manually IDF transform.")
+            _data = csr_matrix((np.ones_like(_data.data), _data.indices, _data.indptr), shape=_data.shape)
+            prepro_data = manual_idf(_data)
         elif self.tfidf == 'TF-IDF':
-            start_time = time.time()
-            if verbose:
-                print("TF-IDF transform.")
-            _data = TfidfTransformer(use_idf=True, smooth_idf=True).fit_transform(_data)
-            elapsed_time['tfidf'] = time.time() - start_time
-        elif self.tfidf == 'None':
-            _data[_data > 0] = 1
+            print("TF-IDF transform.") 
+            _data = manual_tf(_data)
+            prepro_data = manual_idf(_data)
         else:
             raise ValueError('Invalid preprocess method.')
-
+        elapsed_time['tfidf'] = time.time() - start_time
 
         if self.dimension_reduction_method is not None:
             if verbose:
                 print("Dimension reduction.")
             start_time = time.time()
-            _data = self.dimension_reduction_method().transform(_data, **self.dimension_reduction_kw)
+            _data = self.dimension_reduction_method().transform(prepro_data, **self.dimension_reduction_kw)
             elapsed_time['dimension_reduction'] = time.time() - start_time
             if scipy.sparse.issparse(_data):
                 _data = _data.toarray()
@@ -72,7 +86,7 @@ class NearestNeighborsConfig:
         elapsed_time['nearest_neighbors'] = time.time() - start_time
         if verbose:
             print(f"Finished {self}. Elapsed time: {elapsed_time}. Peak memory: {peak_memory}")
-        return neighbor_indices, elapsed_time, peak_memory
+        return neighbor_indices, elapsed_time, prepro_data, _data
 
 
 
@@ -118,12 +132,11 @@ def mp_compute_nearest_neighbors(
 def compute_nearest_neighbors(
     data: csr_matrix,
     config: NearestNeighborsConfig,
-    read_features: Mapping[int,list],
     n_neighbors: int,
     *,
     verbose=True,
 ) -> tuple[ndarray,ndarray,ndarray]:
     
-    neighbor_indices, elapsed_time, peak_memory = config.get_neighbors(data=data, n_neighbors=n_neighbors, verbose=verbose)
+    neighbor_indices, elapsed_time, prepro_data, dim_data = config.get_neighbors(data=data, n_neighbors=n_neighbors, verbose=verbose)
 
-    return neighbor_indices, elapsed_time, peak_memory
+    return neighbor_indices, elapsed_time, prepro_data, dim_data
