@@ -95,6 +95,7 @@ rule extrace_fasta_from_paf_all:
         """
         cut -f1 {input.filter_paf} |sort  |uniq | seqkit grep -f - {input.reads} | seqkit fq2fa - | gzip > {output.filter_reads}
         """
+
 rule extrace_fasta_from_paf_regional:
     input:
         filter_paf="data/real_reads/{sample}/{platform}/filter_aligned.paf",
@@ -138,7 +139,7 @@ rule get_metadata:
         """
         python /home/miaocj/docker_dir/kNN-overlap-finder/workflow/scripts/get_metadata.smk.py {input.fasta} {input.tsv} {output.metadata}
         """
-## Encode reads. This reads.fasta include fasta belong to this reigion, so this script fits for simulate and real reads.
+## Encode reads. The reads.fasta include fasta belong to this reigion, so this script fits for simulate and real reads.
 rule kmer_encoding:
     input:
         fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
@@ -156,29 +157,11 @@ rule kmer_encoding:
     script:
         "scripts/kmer_encoding_for_sim.smk.py"
 
-rule old_kmer_encoding:
+rule hash_kmer_encoding:
     input:
         fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
     output:
-        npz="data/feature_matrix/{sample}/{region}/{platform}/old_kmer_k{k}/feature_matrix.npz",
-        json="data/feature_matrix/{sample}/{region}/{platform}/old_kmer_k{k}/read_features.json.gz",
-    params:
-        sample_fraction=0.05,
-        min_multiplicity=2,
-        seed=562104830,
-    wildcard_constraints:
-        k=r"\d+",
-    conda:
-        "envs/default.yaml"
-    script:
-        "scripts/kmer_encoding_for_sim.smk.py"
-
-rule new_kmer_encoding:
-    input:
-        fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
-    output:
-        npz="data/feature_matrix/{sample}/{region}/{platform}/new_kmer_k{k}/feature_matrix.npz",
-        json="data/feature_matrix/{sample}/{region}/{platform}/new_kmer_k{k}/read_features.json.gz",
+        npz="data/feature_matrix/{sample}/{region}/{platform}/hash_k{k}/feature_matrix.npz",
     params:
         sample_fraction=0.1,
         min_multiplicity=2,
@@ -186,36 +169,17 @@ rule new_kmer_encoding:
     wildcard_constraints:
         k=r"\d+",
     conda:
-        "envs/default.yaml"
+        "envs/evaluate.yaml"
     script:
-        "scripts/kmer_encoding_for_sim.smk.py"
+        "scripts/hash_kmer_encoding.smk.py"
 
-
-rule compensate_kmer_encoding:
-    input:
-        fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
-    output:
-        npz="data/feature_matrix/{sample}/{region}/{platform}/compensate_kmer_k{k}/feature_matrix.npz",
-        json="data/feature_matrix/{sample}/{region}/{platform}/compensate_kmer_k{k}/read_features.json.gz",
-    params:
-        sample_fraction=0.1,
-        min_multiplicity=2,
-        seed=562104830,
-    wildcard_constraints:
-        k=r"\d+",
-    conda:
-        "envs/default.yaml"
-    script:
-        "scripts/kmer_encoding_for_sim.smk.py"
 
 rule minimizer_encoding:
     input:
         fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
-        tsv="data/regional_reads/{sample}/{region}/{platform}/read_info.tsv.gz",
     output:
         npz="data/feature_matrix/{sample}/{region}/{platform}/minimizer_k{k}_w{w}/feature_matrix.npz",
         json="data/feature_matrix/{sample}/{region}/{platform}/minimizer_k{k}_w{w}/read_features.json.gz",
-        tsv="data/feature_matrix/{sample}/{region}/{platform}/minimizer_k{k}_w{w}/metadata.tsv.gz",
     params:
         min_multiplicity=2, ## 区别于kmer编码，指的是包含某kmer数量的reads数目小于2
         seed=562104830,
@@ -256,7 +220,7 @@ rule run_minimap2_ava:
     input:
         fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
     output:
-        paf_minimap2="data/minimap2/{sample}/{region}/{platform}/alignment.paf.gz",
+        paf_minimap2="data/minimap2/{sample}/{region}/{platform}/alignment.paf",
         minimap2_log="data/minimap2/{sample}/{region}/{platform}/minimap2.log",
     params:
         preset="ava-ont",
@@ -266,7 +230,17 @@ rule run_minimap2_ava:
     shell:
         """
         /usr/bin/time -v -o {output.minimap2_log} \
-        minimap2 -x {params.preset} -t {threads} {input.fasta} {input.fasta}| gzip -c > {output.paf_minimap2}
+        minimap2 -x {params.preset} -t {threads} {input.fasta} {input.fasta} > {output.paf_minimap2}
+        """
+        
+rule filter_paf:
+    input:
+        paf_minimap2="data/minimap2/{sample}/{region}/{platform}/alignment.paf",
+    output:
+        filter_minimap2="data/minimap2/{sample}/{region}/{platform}/filter_alignment.paf.gz",
+    shell:
+        """
+        awk '$10 > 150 && ($10/$11) > 0.3' {input.paf_minimap2} | gzip > {output.filter_minimap2}
         """
 
 rule run_daligner:
@@ -282,7 +256,7 @@ rule run_daligner:
     threads: 8
     conda:
         "envs/daligner.yaml"
-    shell:
+    shell: 
         """
         daligner \
             -k{params.k} \
@@ -314,7 +288,6 @@ rule run_mhap:
 rule get_neighbors:
     input:
         feature_matrix="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/feature_matrix.npz",
-        read_features="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/read_features.json.gz",
         metadata="data/regional_reads/{sample}/{region}/{platform}/metadata.tsv.gz",
     output:
         nbr_indice="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{method}_nbr_matrix.npz",
@@ -323,27 +296,26 @@ rule get_neighbors:
     threads: 64
     wildcard_constraints:
         sample=r'(CHM13|rice|ara)',
-        method=r'^/+_^/+'
+        method=r"^M[^/]+",
     conda:
         "envs/evaluate.yaml"
     shell:
         """
         /usr/bin/time -v -o {output.log} \
-        python workflow/scripts/get_neighbors.smk.py --input {input.feature_matrix} {input.read_features} {input.metadata} \
+        python workflow/scripts/get_neighbors.smk.py --input {input.feature_matrix} {input.metadata} \
         --output {output.nbr_indice} {output.time} --method {wildcards.method} --threads {threads}
         """
 
 rule get_neighbors_minimap2:
     input:
         feature_matrix="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/feature_matrix.npz",
-        read_features="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/read_features.json.gz",
         metadata="data/regional_reads/{sample}/{region}/{platform}/metadata.tsv.gz",
-        paf_minimap2="data/minimap2/{sample}/{region}/{platform}/alignment.paf.gz",
+        paf_minimap2="data/minimap2/{sample}/{region}/{platform}/filter_alignment.paf.gz",
     output:
         nbr_indice="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/Minimap2_nbr_matrix.npz",
         time="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/Minimap2_nn_time.json",
         log="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/Minimap2_time.log",
-    threads: 64
+    threads: 1
     wildcard_constraints:
         method=r"[^/]+",
     conda:
@@ -351,14 +323,13 @@ rule get_neighbors_minimap2:
     shell:
         """
         /usr/bin/time -v -o {output.log} \
-        python workflow/scripts/get_neighbors.smk.py --input {input.feature_matrix} {input.read_features} {input.metadata} {input.paf_minimap2} \
+        python workflow/scripts/get_neighbors.smk.py --input {input.feature_matrix} {input.metadata} {input.paf_minimap2} \
         --output {output.nbr_indice} {output.time} --method Minimap2 --threads {threads}
         """
 
 rule get_neighbors_mhap:
     input:
         feature_matrix="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/feature_matrix.npz",
-        read_features="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/read_features.json.gz",
         metadata="data/regional_reads/{sample}/{region}/{platform}/metadata.tsv.gz",
         paf_minimap2="data/mhap/{sample}/{region}/{platform}/{encoding}/mhap.txt",
     output:
@@ -374,14 +345,13 @@ rule get_neighbors_mhap:
     shell:
         """
         /usr/bin/time -v -o {output.log} \
-        python workflow/scripts/get_neighbors.smk.py --input {input.feature_matrix} {input.read_features} {input.metadata} {input.paf_minimap2} \
+        python workflow/scripts/get_neighbors.smk.py --input {input.feature_matrix} {input.metadata} {input.paf_minimap2} \
         --output {output.nbr_indice} {output.time} --method MHAP --threads {threads}
         """
 
 rule get_neighbors_params_tuning:
     input:
         feature_matrix="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/feature_matrix.npz",
-        read_features="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/read_features.json.gz",
         metadata="data/regional_reads/{sample}/{region}/{platform}/metadata.tsv.gz",
         params="data/configs/{param_type}/{config}_parameter.json" 
     output:
@@ -392,6 +362,7 @@ rule get_neighbors_params_tuning:
         param_flag=lambda wc: "--ann-parameter" if wc.param_type == "ann" else "--dim-parameter"
     threads: 64 
     wildcard_constraints:
+        evaluation_threads=r"[^/]+",
         method=r'[A-Za-z]+_[A-Za-z]+_[A-Za-z]+_(\d+d_)?(IDF|TF|TF-IDF|None|binary|count)+',
         param_type=r'ann|dim',
         sample=r'(CHM13|rice|ara)'
@@ -401,7 +372,7 @@ rule get_neighbors_params_tuning:
         """
         /usr/bin/time -v -o {output.log} \
         python workflow/scripts/get_neighbors.smk.py \
-            --input {input.feature_matrix} {input.read_features} {input.metadata}\
+            --input {input.feature_matrix} {input.metadata}\
             --output {output.nbr_indice} {output.time} \
             --method {wildcards.method} \
             {params.param_flag} {input.params} \
@@ -412,7 +383,6 @@ rule get_neighbors_params_tuning:
 rule get_neighbors_diff_n_neighbors:
     input:
         feature_matrix="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/feature_matrix.npz",
-        read_features="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/read_features.json.gz",
         metadata="data/regional_reads/{sample}/{region}/{platform}/metadata.tsv.gz",
     output:
         nbr_indice="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{method}_n{n_neighbors}_nbr_matrix.npz",
@@ -426,14 +396,13 @@ rule get_neighbors_diff_n_neighbors:
     shell:
         """
         /usr/bin/time -v -o {output.log} \
-        python workflow/scripts/get_neighbors.smk.py --input {input.feature_matrix} {input.read_features} {input.metadata} \
+        python workflow/scripts/get_neighbors.smk.py --input {input.feature_matrix} {input.metadata} \
         --output {output.nbr_indice} {output.time} --method {wildcards.method} --n-neighbors {wildcards.n_neighbors} --threads {threads}
         """
 
 rule evaluate_configs:
     input:
         feature_matrix="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/feature_matrix.npz",
-        read_features="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/read_features.json.gz",
         metadata="data/regional_reads/{sample}/{region}/{platform}/metadata.tsv.gz",
         ref_graph="data/regional_reads/{sample}/{region}/{platform}/reference_graph.gpickle",
         nbr_indice="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{method}_nbr_matrix.npz",
@@ -449,7 +418,6 @@ rule evaluate_configs:
 use rule evaluate_configs as evaluate_configs_params_tuning with:
     input:
         feature_matrix="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/feature_matrix.npz",
-        read_features="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/read_features.json.gz",
         metadata="data/regional_reads/{sample}/{region}/{platform}/metadata.tsv.gz",
         ref_graph="data/regional_reads/{sample}/{region}/{platform}/reference_graph.gpickle",
         nbr_indice="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{config}/{method}_nbr_matrix.npz",
@@ -469,16 +437,27 @@ rule get_stat:
 
 
 # ----------------------------------------------------------------------------------------------------
+rule minimap2_for_all2:
+    input:
+        expand("data/minimap2/{region}/alignment.paf",
+        region=['CHM13/all/filter3_real_ONT','CHM13/all/filter3_real_cyclone'])
+
+rule minimap2_for_all:
+    input:
+        expand("data/evaluation64/{region}/kmer_k11/Minimap2_integral_stat.tsv",
+        region=['CHM13/IGK/filter3_real_cyclone','CHM13/IGK/filter3_real_ONT','CHM13/IGK/filter3_real_pb',
+        'CHM13/HLA/filter3_real_cyclone','CHM13/HLA/filter3_real_ONT','CHM13/HLA/filter3_real_pb',
+        'ara/chr1_30M/filter3_real_ONT','rice/chr1_43M/filter3_real_ONT_new',
+        'CHM13/chr22_51M/filter3_real_cyclone','CHM13/chr22_51M/filter3_real_ONT','CHM13/chr22_51M/filter3_real_pb',
+        'CHM13/chr1_248M/filter3_real_cyclone','CHM13/chr1_248M/filter3_real_ONT','CHM13/chr1_248M/filter3_real_pb',
+        'CHM13/all/filter3_real_cyclone','CHM13/all/filter3_real_ONT','CHM13/all/filter3_real_pb'])
 
 
 rule mhap:
     input:
-        expand("data/mhap/{region}/kmer_k11/mhap_3000d.txt",
-        region=['CHM13/IGK/real_cyclone','CHM13/IGK/real_ONT','CHM13/IGK/real_pb',
-        'CHM13/HLA/real_cyclone','CHM13/HLA/real_ONT','CHM13/HLA/real_pb',
-        'ara/chr1_30M/real_ONT','rice/chr1_43M/real_ONT_new',
-        'CHM13/chr22_51M/real_cyclone','CHM13/chr22_51M/real_ONT','CHM13/chr22_51M/real_pb',
-        'CHM13/chr1_248M/real_cyclone','CHM13/chr1_248M/real_ONT','CHM13/chr1_248M/real_pb']
+        expand("data/evaluation64/{region}/kmer_k11/MHAP_integral_stat.tsv",
+        region=[
+        'CHM13/chr1_248M/filter3_real_cyclone','CHM13/chr1_248M/filter3_real_ONT','CHM13/chr1_248M/filter3_real_pb']
         )
 
 rule mhap_try:
@@ -487,8 +466,7 @@ rule mhap_try:
         )
 rule all:
     input:
-        "data/evaluation64/CHM13/all/filter3_real_cyclone/kmer_k11/ann_NNDescent_config3/NNDescent_Cosine_SparseRP_3000d_IDF_integral_stat.tsv",
-        "data/evaluation64/CHM13/all/filter3_real_pb/kmer_k11/ann_NNDescent_config3/NNDescent_Cosine_SparseRP_3000d_IDF_integral_stat.tsv",
+        "data/evaluation64/CHM13/all/filter3_real_cyclone/kmer_k21/ann_NNDescent_config3/NNDescent_Cosine_SparseRP_3000d_IDF_integral_stat.tsv",
 
 rule simulate_chr1:
     input:
@@ -504,56 +482,55 @@ rule rpf:
         'CHM13/chr22_51M/real_cyclone','CHM13/chr22_51M/real_ONT',
         'CHM13/chr1_248M/real_cyclone','CHM13/chr1_248M/real_ONT'])
 
-rule preprocess1:
+rule all_test1:
     input:
-        expand("data/evaluation64/{region}/kmer_k11/Exact_{distance}_None_{preprocess}_integral_stat.tsv",
-        region=['CHM13/IGK/real_cyclone','CHM13/IGK/real_ONT','CHM13/IGK/real_pb',
-        'CHM13/HLA/real_cyclone','CHM13/HLA/real_ONT','CHM13/HLA/real_pb',
-        'ara/chr1_30M/real_ONT','rice/chr1_43M/real_ONT_new',
-        'CHM13/chr22_51M/real_cyclone','CHM13/chr22_51M/real_ONT','CHM13/chr22_51M/real_pb'],
+        expand("data/evaluation64/{region}/kmer_k21/Exact_{distance}_None_{preprocess}_integral_stat.tsv",
+        region=['CHM13/IGK/filter3_real_cyclone','CHM13/IGK/filter3_real_ONT','CHM13/IGK/filter3_real_pb',
+        'CHM13/HLA/filter3_real_cyclone','CHM13/HLA/filter3_real_ONT','CHM13/HLA/filter3_real_pb',
+        'ara/chr1_30M/filter3_real_ONT','rice/chr1_43M/filter3_real_ONT_new',
+        'CHM13/chr22_51M/filter3_real_cyclone','CHM13/chr22_51M/filter3_real_ONT','CHM13/chr22_51M/filter3_real_pb'],
         distance=['Cosine','Euclidean'],
-        preprocess=['TF','IDF','TF-IDF','binary','count']) ## chr1 不抽样需要17个小时
+        preprocess=['TF','IDF','TF-IDF','binary','count']), ## chr1 不抽样需要17个小时
+        expand("data/evaluation64/{region}/filter3_real_{platform}/kmer_k21/Exact_Cosine_{dim_method}_3000d_IDF_integral_stat.tsv",
+        region=['CHM13/IGK','CHM13/HLA'],
+        platform=['cyclone','pb','ONT'],
+        dim_method=['Spectural','GaussianRP','SparseRP','umap','PCA','scBiMap']),
+        expand("data/evaluation64/{region}/kmer_k21/{method}_integral_stat.tsv",
+        region=['CHM13/IGK/filter3_real_cyclone','CHM13/IGK/filter3_real_ONT','CHM13/IGK/filter3_real_pb',
+        'CHM13/HLA/filter3_real_cyclone','CHM13/HLA/filter3_real_ONT','CHM13/HLA/filter3_real_pb',
+        'ara/chr1_30M/filter3_real_ONT','rice/chr1_43M/filter3_real_ONT_new'],
+        method=['SimHash_Hamming_None_IDF']),
+        expand("data/evaluation64/{region}/kmer_k21/Exact_{distance}_{dim_method}_3000d_IDF_integral_stat.tsv",
+        region=['CHM13/IGK/filter3_real_cyclone','CHM13/IGK/filter3_real_ONT','CHM13/IGK/filter3_real_pb',
+        'CHM13/HLA/filter3_real_cyclone','CHM13/HLA/filter3_real_ONT','CHM13/HLA/filter3_real_pb',
+        'ara/chr1_30M/filter3_real_ONT','rice/chr1_43M/filter3_real_ONT_new',
+        'CHM13/chr22_51M/filter3_real_cyclone','CHM13/chr22_51M/filter3_real_ONT','CHM13/chr22_51M/filter3_real_pb'],
+        distance=['Cosine','Euclidean'],dim_method=['GaussianRP','SparseRP'])  ##umap 在chr1 无法运行成功 降维花了7个小时
+# rule dimension_method2:
+#     input:
 
-rule dimension_method2:
-    input:
-        expand("data/evaluation64/{region}/kmer_k11/Exact_Cosine_{dim_method}_3000d_IDF_nbr_matrix.npz",
-        region=['CHM13/IGK/real_cyclone','CHM13/IGK/real_ONT','CHM13/IGK/real_pb',
-        'CHM13/HLA/real_cyclone','CHM13/HLA/real_ONT','CHM13/HLA/real_pb'],
-        dim_method=['Spectural','GaussianRP','SparseRP','umap','PCA','scBiMap'])
 
 rule dimension_method2_1:
     input:
-        expand("data/evaluation64/{region}/kmer_k11/{method}_nbr_matrix.npz",
-        region=['CHM13/IGK/real_cyclone','CHM13/IGK/real_ONT','CHM13/IGK/real_pb',
-        'CHM13/HLA/real_cyclone','CHM13/HLA/real_ONT','CHM13/HLA/real_pb',
-        'ara/chr1_30M/real_ONT','rice/chr1_43M/real_ONT_new',
-        'CHM13/chr22_51M/real_cyclone','CHM13/chr22_51M/real_ONT','CHM13/chr22_51M/real_pb'],
+        expand("data/evaluation64/{region}/kmer_k21/{method}_nbr_matrix.npz",
+        region=['CHM13/IGK/filter3_real_cyclone','CHM13/IGK/filter3_real_ONT','CHM13/IGK/filter3_real_pb',
+        'CHM13/HLA/filter3_real_cyclone','CHM13/HLA/filter3_real_ONT','CHM13/HLA/filter3_real_pb',
+        'ara/chr1_30M/filter3_real_ONT','rice/chr1_43M/filter3_real_ONT_new',
+        'CHM13/chr22_51M/filter3_real_cyclone','CHM13/chr22_51M/filter3_real_ONT','CHM13/chr22_51M/filter3_real_pb'],
         method=['SimHash_Hamming_None_IDF','MinHash_Jaccard_None_IDF'])
 
 rule dimension_method3:
     input:
-        expand("data/evaluation64/{region}/kmer_k11/Exact_Cosine_{dim_method}_3000d_IDF_nbr_matrix.npz",
-        region=['CHM13/IGK/real_cyclone','CHM13/IGK/real_ONT','CHM13/IGK/real_pb',
-        'CHM13/HLA/real_cyclone','CHM13/HLA/real_ONT','CHM13/HLA/real_pb',
-        'ara/chr1_30M/real_ONT','rice/chr1_43M/real_ONT_new',
-        'CHM13/chr22_51M/real_cyclone','CHM13/chr22_51M/real_ONT','CHM13/chr22_51M/real_pb',
-        'CHM13/chr1_248M/real_cyclone','CHM13/chr1_248M/real_ONT','CHM13/chr1_248M/real_pb'],
-        dim_method=['GaussianRP','SparseRP'])  ##umap 在chr1 无法运行成功 降维花了7个小时
-
-rule dimension_method4:
-    input:
-        expand("data/evaluation64/{region}/kmer_k11/Exact_{distance}_{dim_method}_3000d_IDF_integral_stat.tsv",
-        region=['CHM13/IGK/real_cyclone','CHM13/IGK/real_ONT','CHM13/IGK/real_pb',
-        'CHM13/HLA/real_cyclone','CHM13/HLA/real_ONT','CHM13/HLA/real_pb',
-        'ara/chr1_30M/real_ONT','rice/chr1_43M/real_ONT_new',
-        'CHM13/chr22_51M/real_cyclone','CHM13/chr22_51M/real_ONT','CHM13/chr22_51M/real_pb',
-        'CHM13/chr1_248M/real_cyclone','CHM13/chr1_248M/real_ONT','CHM13/chr1_248M/real_pb'],
-        distance=['Cosine','Euclidean'],
-        dim_method=['GaussianRP','SparseRP'])
+        expand("data/evaluation64/{region}/kmer_k21/Exact_{distance}_{dim_method}_3000d_IDF_integral_stat.tsv",
+        region=['CHM13/IGK/filter3_real_cyclone','CHM13/IGK/filter3_real_ONT','CHM13/IGK/filter3_real_pb',
+        'CHM13/HLA/filter3_real_cyclone','CHM13/HLA/filter3_real_ONT','CHM13/HLA/filter3_real_pb',
+        'ara/chr1_30M/filter3_real_ONT','rice/chr1_43M/filter3_real_ONT_new',
+        'CHM13/chr22_51M/filter3_real_cyclone','CHM13/chr22_51M/filter3_real_ONT','CHM13/chr22_51M/filter3_real_pb'],
+        distance=['Cosine','Euclidean'],dim_method=['GaussianRP','SparseRP'])  ##u map 在chr1 无法运行成功 降维花了7个小时
 
 rule dimensions5:
     input:
-        expand("data/evaluation64/{region}/kmer_k11/Exact_Cosine_SparseRP_{dim}d_IDF_nbr_matrix.npz",
+        expand("data/evaluation64/{region}/kmer_k21/Exact_Cosine_SparseRP_{dim}d_IDF_nbr_matrix.npz",
         region=['CHM13/IGK/real_cyclone','CHM13/IGK/real_ONT','CHM13/IGK/real_pb',
         'CHM13/HLA/real_cyclone','CHM13/HLA/real_ONT','CHM13/HLA/real_pb',
         'ara/chr1_30M/real_ONT','rice/chr1_43M/real_ONT_new',
@@ -566,46 +543,52 @@ rule dimensions8:
         region=['CHM13/chr1_248M/filter3_real_cyclone','CHM13/chr1_248M/filter3_real_ONT','CHM13/chr1_248M/filter3_real_pb'],
         dim=[100,500,1000,2000,3000,6000])
 
-rule ann_test7:
+rule test_srp_params:
     input:
-        expand("data/evaluation64/{region}/kmer_k11/{method}_nbr_matrix.npz",
-        method=['ann_NNDescent_config3/NNDescent_Cosine_SparseRP_3000d_IDF',
-                'ann_HNSW_config4/HNSW_Cosine_SparseRP_3000d_IDF',
-                'ann_PQ_config5/PQ_Cosine_SparseRP_3000d_IDF',
-                'ann_IVFPQ_config4/IVFPQ_Cosine_SparseRP_3000d_IDF'],
-        region=['CHM13/IGK/real_cyclone','CHM13/HLA/real_cyclone',
-        'CHM13/IGK/real_ONT','CHM13/HLA/real_ONT',
-        'CHM13/IGK/real_pb','CHM13/HLA/real_pb',
-        'ara/chr1_30M/real_ONT','rice/chr1_43M/real_ONT_new',
-        'CHM13/chr22_51M/real_cyclone','CHM13/chr22_51M/real_ONT','CHM13/chr22_51M/real_pb',
-        'CHM13/chr1_248M/real_cyclone','CHM13/chr1_248M/real_ONT','CHM13/chr1_248M/real_pb'])
+        expand("data/evaluation64/CHM13/chr1_248M/filter3_real_cyclone/kmer_k21/ann_NNDescent_{config}/NNDescent_Cosine_SparseRP_3000d_IDF_integral_stat.tsv",
+        config=['default','config1','config2','config3','config4','config5'])
 
 
 rule PQ_PT2:
     input:
-        expand("data/evaluation64/CHM13/chr1_248M/filter3_real_cyclone/kmer_k16/{config}/PQ_Cosine_SparseRP_3000d_IDF_integral_stat.tsv",
-        config=['PQ_config1','PQ_config2','PQ_config3','PQ_config4','PQ_config5','PQ_default'])
+        expand("data/evaluation64/CHM13/chr1_248M/filter3_real_cyclone/kmer_k21/ann_{config}/PQ_Cosine_SparseRP_3000d_IDF_integral_stat.tsv",
+        config=['PQ_config1','PQ_config2','PQ_config5','PQ_default'])
 
 rule HNSW_PT3:
     input:
-        expand("data/evaluation64/CHM13/chr1_248M/real_cyclone/kmer_k16/{config}/HNSW_Cosine_SparseRP_3000d_IDF_nn_time.json",
+        expand("data/evaluation64/CHM13/chr1_248M/filter3_real_cyclone/kmer_k21/ann_{config}/HNSW_Cosine_SparseRP_3000d_IDF_integral_stat.tsv",
         config=['HNSW_config1','HNSW_config2','HNSW_config3','HNSW_config4','HNSW_config5','HNSW_default'])
-
 
 rule IVFPQ_PT5:
     input:
-        expand("data/evaluation64/CHM13/chr1_248M/real_cyclone/kmer_k16/{config}/IVFPQ_Cosine_SparseRP_3000d_IDF_nn_time.json",
+        expand("data/evaluation64/CHM13/chr1_248M/filter3_real_cyclone/kmer_k21/{config}/IVFPQ_Cosine_SparseRP_3000d_IDF_nn_time.json",
         config=['IVFPQ_config1','IVFPQ_config2','IVFPQ_config3','IVFPQ_config4','IVFPQ_config5','IVFPQ_default'])
+
+##先测参数
+rule ann_test7:
+    input:
+        expand("data/evaluation64/{region}/kmer_k21/{method}_nbr_matrix.npz",
+        method=['ann_NNDescent_config3/NNDescent_Cosine_SparseRP_3000d_IDF',
+                'ann_HNSW_config4/HNSW_Cosine_SparseRP_3000d_IDF',
+                'ann_PQ_config5/PQ_Cosine_SparseRP_3000d_IDF',
+                'ann_IVFPQ_config4/IVFPQ_Cosine_SparseRP_3000d_IDF'],
+        region=['CHM13/IGK/filter3_real_cyclone','CHM13/IGK/filter3_real_ONT','CHM13/IGK/filter3_real_pb',
+        'CHM13/HLA/filter3_real_cyclone','CHM13/HLA/filter3_real_ONT','CHM13/HLA/filter3_real_pb',
+        'ara/chr1_30M/filter3_real_ONT','rice/chr1_43M/filter3_real_ONT_new',
+        'CHM13/chr22_51M/filter3_real_cyclone','CHM13/chr22_51M/filter3_real_ONT','CHM13/chr22_51M/filter3_real_pb',
+        'CHM13/chr1_248M/filter3_real_cyclone','CHM13/chr1_248M/filter3_real_ONT','CHM13/chr1_248M/filter3_real_pb'])
+
+
 
 rule test_k:
     input:
-        expand("data/evaluation64/CHM13/{region}/real_cyclone/kmer2_k{k}/NNDescent_Cosine_SparseRP_3000d_IDF_integral_stat.tsv",
+        expand("data/evaluation64/CHM13/{region}/filter3_real_cyclone/kmer_k{k}/ann_NNDescent_config3/NNDescent_Cosine_SparseRP_3000d_IDF_integral_stat.tsv",
         region=['chr1_248M'],
-        k=[5,7,9,11,13,15,17])
+        k=[5,7,9,11,13,15,17,19,21])
 
 rule ann_test8:
     input:
-        expand("data/evaluation64/CHM13/chr1_248M/real_cyclone/kmer_k11/ann_NNDescent_config{config}/NNDescent_Cosine_SparseRP_3000d_IDF_integral_stat.tsv",
+        expand("data/evaluation64/CHM13/chr1_248M/filter3_real_cyclone/kmer_k11/ann_NNDescent_config{config}/NNDescent_Cosine_SparseRP_3000d_IDF_integral_stat.tsv",
         config=[1,2,3,4,5,6,7,8])
 
 rule ann_test9:
@@ -613,16 +596,33 @@ rule ann_test9:
         expand("data/evaluation64/CHM13/chr1_248M/real_cyclone/kmer_k11/{config}_Cosine_SparseRP_3000d_IDF_integral_stat.tsv",
         config=['ann_RPForest_config1/RPForest','ann_RPForest_config2/RPForest'])
 
-rule test_srp_params:
-    input:
-        expand("data/evaluation64/CHM13/chr1_248M/real_cyclone/kmer_k11/dim_SRP_{config}/NNDescent_Cosine_SparseRP_3000d_IDF_integral_stat.tsv",
-        config=['default','config1','config2','config3','config4','config5'])
 
 rule test_minimizer_small_region:
     input:
-        expand("data/evaluation64/CHM13/{region}/real_cyclone/{encode}/Exact_Cosine_None_TF-IDF_integral_stat.tsv",
-        encode=['minimizer_k11_w10','minimizer_k11_w20','minimizer_k11_w10'],
+        expand("data/feature_matrix/CHM13/{region}/filter3_real_{platform}/{encode}/feature_matrix.npz",
+        encode=['minimizer_k11_w10','minimizer_k11_w20','minimizer_k15_w10','kmer_k7','kmer_k9','kmer_k11','kmer_k15','kmer_k17','kmer_k19','kmer_k21','kmer_k23'],
+        region=['HLA','IGK','chr22_51M'],
+        platform=['cyclone','pb','ONT'])
+rule test_all_encoding:
+    input:
+        expand("data/feature_matrix/CHM13/{region}/filter3_real_{platform}/{encode}/feature_matrix.npz",
+        encode=['kmer_k15','kmer_k17','kmer_k19','kmer_k21'],
+        region=['all'],
+        platform=['cyclone'])
+
+rule test_minimizer_small_region2:
+    input:
+        expand("data/evaluation64/CHM13/{region}/filter3_real_{platform}/{encode}/Exact_Cosine_None_TF-IDF_integral_stat.tsv",
+        encode=['minimizer_k11_w10','minimizer_k11_w20','minimizer_k15_w10','kmer_k7','kmer_k9','kmer_k11','kmer_k15','kmer_k17','kmer_k19','kmer_k21','kmer_k23'],
+        region=['HLA','IGK','chr22_51M'],
+        platform=['cyclone','pb','ONT'])
+
+rule test_minimizer_small_region1:
+    input:
+        expand("data/evaluation64/CHM13/{region}/filter3_real_cyclone/{encode}/Exact_Cosine_None_TF-IDF_integral_stat.tsv",
+        encode=['minimizer_k11_w10','minimizer_k11_w20','minimizer_k15_w10'],
         region=['HLA','IGK','chr22_51M'])
+#
 
 rule test_encoding:
     input:

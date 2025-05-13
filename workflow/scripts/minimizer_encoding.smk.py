@@ -170,7 +170,6 @@ def build_minimizer_matrix(read_sequences: Sequence[str],
 
 def encode_reads(
     fasta_path: str,
-    info_path: str,
     k,
     w,
     *,
@@ -181,7 +180,6 @@ def encode_reads(
     Encodes sequencing reads from a gzipped FASTA file as a sparse matrix.
     """
     # Load reads info
-    info_df = pd.read_table(info_path).set_index("read_name")
 
     # Load reads
     read_names, read_orientations, read_sequences = load_reads(fasta_path=fasta_path)
@@ -195,69 +193,22 @@ def encode_reads(
         hash_seed=hash_seed
     )
 
-    # Build metadata
-    def flip(strand):
-        return {"+": "-", "-": "+"}[strand]
 
-    rows = []
-    if 'reference_chromosome' in info_df.columns:
-        for i in range(len(read_sequences)):
-            read_name = read_names[i]
-            read_orientation = read_orientations[i]
-            reference_strand = info_df.at[read_name, "reference_strand"]
-            reference_chromosome = info_df.at[read_name, "reference_chromosome"]
-            if read_orientation == "-":
-                reference_strand = flip(reference_strand)
-            rows.append(
-                dict(
-                    read_id=i,
-                    read_name=read_name,
-                    read_orientation=read_orientation,
-                    read_length=info_df.at[read_name, "read_length"],
-                    reference_chromosome=reference_chromosome,
-                    reference_strand=reference_strand,
-                    reference_start=info_df.at[read_name, "reference_start"],
-                    reference_end=info_df.at[read_name, "reference_end"],
-                )
-            )
-    else:
-        for i in range(len(read_sequences)):
-            read_name = read_names[i]
-            read_orientation = read_orientations[i]
-            reference_strand = info_df.at[read_name, "reference_strand"]
-            if read_orientation == "-":
-                reference_strand = flip(reference_strand)
-            rows.append(
-                dict(
-                    read_id=i,
-                    read_name=read_name,
-                    read_orientation=read_orientation,
-                    read_length=info_df.at[read_name, "read_length"],
-                    reference_strand=reference_strand,
-                    reference_start=info_df.at[read_name, "reference_start"],
-                    reference_end=info_df.at[read_name, "reference_end"],
-                )
-            )
-    metadata = pd.DataFrame(rows)
-
-    return feature_matrix, read_features, metadata
+    return feature_matrix, read_features
 
 def main(snakemake: "SnakemakeContext"):
 
     input_fasta_file = snakemake.input["fasta"]
-    input_tsv_file = snakemake.input["tsv"]
 
     output_npz_file = snakemake.output["npz"]
     output_json_file = snakemake.output["json"]
-    output_tsv_file = snakemake.output["tsv"]
     min_multiplicity = snakemake.params['min_multiplicity']
     k = int(snakemake.wildcards["k"])
     w = int(snakemake.wildcards["w"])
     seed = snakemake.params["seed"]
 
-    feature_matrix, read_features, metadata = encode_reads(
+    feature_matrix, read_features = encode_reads(
         fasta_path=input_fasta_file,
-        info_path=input_tsv_file,
         k=k,
         w=w,
         min_multiplicity=min_multiplicity,
@@ -266,8 +217,6 @@ def main(snakemake: "SnakemakeContext"):
     sp.save_npz(output_npz_file, feature_matrix)
     with gzip.open(output_json_file, "wt") as f:
         json.dump(read_features, f)
-    metadata.to_csv(output_tsv_file, index=False, sep="\t")
-
 
 if __name__ == "__main__":
     main(snakemake)

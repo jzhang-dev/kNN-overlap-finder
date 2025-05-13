@@ -32,7 +32,6 @@ method = snakemake.wildcards['method']
 npz_path = snakemake.input['feature_matrix']
 ref_graph_path = snakemake.input['ref_graph']
 tsv_path = snakemake.input['metadata']
-json_path = snakemake.input['read_features']
 nbr_path = snakemake.input['nbr_indice']
 df_file= snakemake.output['integral_stat']
 

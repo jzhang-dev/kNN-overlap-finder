@@ -39,13 +39,11 @@ args = parser.parse_args()
 
 if len(args.input) == 4:
     npz_path = args.input[0]
-    json_path = args.input[1]
-    tsv_path = args.input[2]
-    paf_path = args.input[3]
+    tsv_path = args.input[1]
+    paf_path = args.input[2]
 else:
     npz_path = args.input[0]
-    json_path = args.input[1]
-    tsv_path = args.input[2]
+    tsv_path = args.input[1]
 nbr_path = args.output[0]
 time_path = args.output[1]
 
