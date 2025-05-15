@@ -86,7 +86,7 @@ class NearestNeighborsConfig:
         elapsed_time['nearest_neighbors'] = time.time() - start_time
         if verbose:
             print(f"Finished {self}. Elapsed time: {elapsed_time}. Peak memory: {peak_memory}")
-        return neighbor_indices, elapsed_time, prepro_data, _data
+        return neighbor_indices, elapsed_time
 
 
 
@@ -137,6 +137,6 @@ def compute_nearest_neighbors(
     verbose=True,
 ) -> tuple[ndarray,ndarray,ndarray]:
     
-    neighbor_indices, elapsed_time, prepro_data, dim_data = config.get_neighbors(data=data, n_neighbors=n_neighbors, verbose=verbose)
+    neighbor_indices, elapsed_time = config.get_neighbors(data=data, n_neighbors=n_neighbors, verbose=verbose)
 
-    return neighbor_indices, elapsed_time, prepro_data, dim_data
+    return neighbor_indices, elapsed_time

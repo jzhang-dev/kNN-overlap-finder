@@ -168,6 +168,7 @@ rule hash_kmer_encoding:
         seed=562104830,
     wildcard_constraints:
         k=r"\d+",
+    threads: 32
     conda:
         "envs/evaluate.yaml"
     script:
@@ -296,7 +297,7 @@ rule get_neighbors:
     threads: 64
     wildcard_constraints:
         sample=r'(CHM13|rice|ara)',
-        method=r"^M[^/]+",
+        # method=r"^M[^/]+",
     conda:
         "envs/evaluate.yaml"
     shell:
@@ -457,7 +458,8 @@ rule mhap:
     input:
         expand("data/evaluation64/{region}/kmer_k11/MHAP_integral_stat.tsv",
         region=[
-        'CHM13/chr1_248M/filter3_real_cyclone','CHM13/chr1_248M/filter3_real_ONT','CHM13/chr1_248M/filter3_real_pb']
+        'CHM13/IGK/filter3_real_cyclone','CHM13/IGK/filter3_real_ONT','CHM13/IGK/filter3_real_pb',
+        'CHM13/HLA/filter3_real_cyclone','CHM13/HLA/filter3_real_ONT','CHM13/HLA/filter3_real_pb',]
         )
 
 rule mhap_try:
@@ -491,16 +493,15 @@ rule all_test1:
         'CHM13/chr22_51M/filter3_real_cyclone','CHM13/chr22_51M/filter3_real_ONT','CHM13/chr22_51M/filter3_real_pb'],
         distance=['Cosine','Euclidean'],
         preprocess=['TF','IDF','TF-IDF','binary','count']), ## chr1 不抽样需要17个小时
-        expand("data/evaluation64/{region}/filter3_real_{platform}/kmer_k21/Exact_Cosine_{dim_method}_3000d_IDF_integral_stat.tsv",
+        expand("data/evaluation64/{region}/filter3_real_{platform}/kmer_k21/Exact_Cosine_{dim_method}_1000d_IDF_integral_stat.tsv",
         region=['CHM13/IGK','CHM13/HLA'],
         platform=['cyclone','pb','ONT'],
         dim_method=['Spectural','GaussianRP','SparseRP','umap','PCA','scBiMap']),
         expand("data/evaluation64/{region}/kmer_k21/{method}_integral_stat.tsv",
         region=['CHM13/IGK/filter3_real_cyclone','CHM13/IGK/filter3_real_ONT','CHM13/IGK/filter3_real_pb',
-        'CHM13/HLA/filter3_real_cyclone','CHM13/HLA/filter3_real_ONT','CHM13/HLA/filter3_real_pb',
-        'ara/chr1_30M/filter3_real_ONT','rice/chr1_43M/filter3_real_ONT_new'],
+        'CHM13/HLA/filter3_real_cyclone','CHM13/HLA/filter3_real_ONT','CHM13/HLA/filter3_real_pb'],
         method=['SimHash_Hamming_None_IDF']),
-        expand("data/evaluation64/{region}/kmer_k21/Exact_{distance}_{dim_method}_3000d_IDF_integral_stat.tsv",
+        expand("data/evaluation64/{region}/kmer_k21/Exact_{distance}_{dim_method}_1000d_IDF_integral_stat.tsv",
         region=['CHM13/IGK/filter3_real_cyclone','CHM13/IGK/filter3_real_ONT','CHM13/IGK/filter3_real_pb',
         'CHM13/HLA/filter3_real_cyclone','CHM13/HLA/filter3_real_ONT','CHM13/HLA/filter3_real_pb',
         'ara/chr1_30M/filter3_real_ONT','rice/chr1_43M/filter3_real_ONT_new',
@@ -508,8 +509,17 @@ rule all_test1:
         distance=['Cosine','Euclidean'],dim_method=['GaussianRP','SparseRP'])  ##umap 在chr1 无法运行成功 降维花了7个小时
 # rule dimension_method2:
 #     input:
-
-
+rule all_test2:
+    input:
+        expand("data/evaluation64/{region}/kmer_k21/Exact_Cosine_SparseRP_{dim}d_IDF_integral_stat.tsv",
+        region=['CHM13/IGK/filter3_real_cyclone','CHM13/IGK/filter3_real_ONT','CHM13/IGK/filter3_real_pb',
+        'CHM13/HLA/filter3_real_cyclone','CHM13/HLA/filter3_real_ONT','CHM13/HLA/filter3_real_pb',
+        'ara/chr1_30M/filter3_real_ONT','rice/chr1_43M/filter3_real_ONT_new',
+        'CHM13/chr22_51M/filter3_real_cyclone','CHM13/chr22_51M/filter3_real_ONT','CHM13/chr22_51M/filter3_real_pb'],
+        dim=[100,500,1000,2000,3000,6000]),
+        # expand("data/evaluation64/{region}/kmer_k11/ann_NNDescent_config3/NNDescent_Cosine_SparseRP_{dim}d_IDF_integral_stat.tsv",
+        # region=['CHM13/chr1_248M/filter3_real_cyclone','CHM13/chr1_248M/filter3_real_ONT','CHM13/chr1_248M/filter3_real_pb'],
+        # dim=[100,500,1000,2000,3000,6000]),
 rule dimension_method2_1:
     input:
         expand("data/evaluation64/{region}/kmer_k21/{method}_nbr_matrix.npz",
@@ -517,7 +527,10 @@ rule dimension_method2_1:
         'CHM13/HLA/filter3_real_cyclone','CHM13/HLA/filter3_real_ONT','CHM13/HLA/filter3_real_pb',
         'ara/chr1_30M/filter3_real_ONT','rice/chr1_43M/filter3_real_ONT_new',
         'CHM13/chr22_51M/filter3_real_cyclone','CHM13/chr22_51M/filter3_real_ONT','CHM13/chr22_51M/filter3_real_pb'],
-        method=['SimHash_Hamming_None_IDF','MinHash_Jaccard_None_IDF'])
+        method=['SimHash_Hamming_None_IDF','MinHash_Jaccard_None_IDF']),
+
+
+
 
 rule dimension_method3:
     input:
@@ -526,7 +539,7 @@ rule dimension_method3:
         'CHM13/HLA/filter3_real_cyclone','CHM13/HLA/filter3_real_ONT','CHM13/HLA/filter3_real_pb',
         'ara/chr1_30M/filter3_real_ONT','rice/chr1_43M/filter3_real_ONT_new',
         'CHM13/chr22_51M/filter3_real_cyclone','CHM13/chr22_51M/filter3_real_ONT','CHM13/chr22_51M/filter3_real_pb'],
-        distance=['Cosine','Euclidean'],dim_method=['GaussianRP','SparseRP'])  ##u map 在chr1 无法运行成功 降维花了7个小时
+        distance=['Cosine','Euclidean'],dim_method=['GaussianRP','SparseRP'])  ##umap 在chr1 无法运行成功 降维花了7个小时
 
 rule dimensions5:
     input:

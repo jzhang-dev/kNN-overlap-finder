@@ -669,7 +669,7 @@ class SimHash(_NearestNeighbors):
         self,
         data: csr_matrix | np.ndarray,
         n_neighbors: int,
-        repeats=3000,
+        repeats=1000,
         seed=20141025,
         n_jobs:int| None =None,
     ) -> np.ndarray:

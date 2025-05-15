@@ -37,7 +37,7 @@ parser.add_argument("--threads", type=int, default=64, required=False)
 
 args = parser.parse_args()
 
-if len(args.input) == 4:
+if len(args.input) == 3:
     npz_path = args.input[0]
     tsv_path = args.input[1]
     paf_path = args.input[2]
@@ -104,13 +104,11 @@ elif 'Exact' in method and 'chr1_248M' in tsv_path:
     )
 else:
     config = parse_string_to_config(method,ANN_parameter,real_dim_parameter)
-    neighbor_indices, elapsed_time, prepro_data, dim_data = compute_nearest_neighbors(
+    neighbor_indices, elapsed_time = compute_nearest_neighbors(
         data=feature_matrix,
         config=config,
         n_neighbors=max_n_neighbors,
     )
-    np.savez(nbr_path[:-14]+'dim.npz',dim_data)
-    sp.sparse.save_npz(nbr_path[:-14]+'prepro.npz',prepro_data)
 
 np.savez(nbr_path, neighbor_indices)
 with open(time_path, 'w', encoding='utf-8') as f:
