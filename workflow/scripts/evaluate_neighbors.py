@@ -50,6 +50,7 @@ with open(ref_graph_path,'rb') as f:
     reference_graph = pickle.load(f)
 print("reference graph loading done")
 
+
 max_n_neighbors=20
 df_rows = []
 read_ids = np.array(list(meta_df.index))
@@ -58,6 +59,7 @@ k_values = np.arange(1, max_n_neighbors)
 neighbor_edges_nums = []
 precisions = []
 mean_overlap_sizes = []
+
 
 for k in k_values:
     graph = OverlapGraph.from_neighbor_indices(

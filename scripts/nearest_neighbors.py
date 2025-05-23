@@ -12,14 +12,12 @@ from numpy import matlib, ndarray
 from numpy.typing import NDArray
 import sklearn.neighbors
 import hnswlib
-from itertools import chain 
-from collections import Counter
-import secrets
-import random
 import pynear
 import faiss
 import pynndescent
 from data_io import parse_paf_file, get_sibling_id
+from accelerate import open_gzipped
+
 def hamming_distance(x, y):  
     return np.count_nonzero(x != y)
 
@@ -483,6 +481,60 @@ class PAFNearestNeighbors(_NearestNeighbors):
             nbr_matrix[i, : len(neighbors)] = neighbors
         return nbr_matrix
 
+class idPAFNearestNeighbors(_NearestNeighbors):
+    def get_neighbors(
+        self,
+        data: csr_matrix | np.ndarray,
+        n_neighbors: int,
+        paf_path: str,
+        read_indices: Mapping[str, int],
+        *,
+        min_alignment_length: int = 0,
+    ) -> np.ndarray:
+        # Calculate cumulative alignment lengths
+        alignment_lengths = collections.defaultdict(collections.Counter)
+        i=0
+        for record in parse_paf_file(paf_path):
+            ##recorde process
+            i+=1
+            if i % 10000000 == 0:
+                print(i)
+                
+            i1 = int(record.query_name)*2
+            i2 = int(record.target_name)*2
+            if i1 is None or i2 is None:
+                # Assume query or target is excluded
+                continue
+            if record.strand == "-":
+                i1 = get_sibling_id(i1)
+            length = record.alignment_block_length
+            alignment_lengths[i1][i2] += length
+            alignment_lengths[i2][i1] += length
+            i1, i2 = get_sibling_id(i1), get_sibling_id(i2)
+            alignment_lengths[i1][i2] += length
+            alignment_lengths[i2][i1] += length
+        if len(alignment_lengths) == 0:
+            warn(f"No overlaps found from {paf_path}")
+
+        print('alignment_lengths generation done')
+        # Construct neighbor matrix
+        n_rows = data.shape[0]
+        nbr_matrix = np.empty((n_rows, n_neighbors), dtype=np.int64)
+        nbr_matrix[:, :] = -1
+        for i in range(n_rows):
+            if i % 10000 ==0:
+                print(i)
+            row_nbr_dict = {
+                j: length
+                for j, length in alignment_lengths[i].items()
+                if length >= min_alignment_length
+            }
+            neighbors = list(
+                sorted(row_nbr_dict, key=lambda x: row_nbr_dict[x], reverse=True)
+            )[:n_neighbors]
+            nbr_matrix[i, : len(neighbors)] = neighbors
+        return nbr_matrix
+
 class MHAPNearestNeighbors(_NearestNeighbors):
     def get_neighbors(
         self,
@@ -491,51 +543,140 @@ class MHAPNearestNeighbors(_NearestNeighbors):
         paf_path: str,
         read_indices: Mapping[str, int],
         *,
-        max_error_percentage: int = 0.5,
+        max_error_percentage: float = 0.3,
     ) -> np.ndarray:
         # Calculate cumulative alignment lengths
-        error = collections.defaultdict(collections.Counter)
+        share_minimizer_dict = collections.defaultdict(collections.Counter)
         i=0
-        with open(paf_path,'rt') as f:
+        with open_gzipped(paf_path,'rt') as f:
             for line in f:
                 li = line.strip().split(' ')
-                i1 = read_indices.get(li[0])
-                i2 = read_indices.get(li[1])
-                if li[4] == 1:
-                    i1 += 1
-                if li[8] == 1:
-                    i2 += 1
-                if  float(li[2]) < 0.3:
-                    error_per = float(li[3])
-                    error[i1][i2] = error_per
-                    error[i2][i1] = error_per
-                    i1, i2 = get_sibling_id(i1), get_sibling_id(i2)
-                    error[i1][i2] = error_per
-                    error[i2][i1] = error_per
-
+                if len(li) > 10:
+                    i1 = read_indices.get(li[0])
+                    i2 = read_indices.get(li[1])
+                    if li[4] == '1':
+                        i1 = get_sibling_id(i1)
+                    if li[8] == '1':
+                        i2 = get_sibling_id(i2)
+                    if float(li[2]) < max_error_percentage:
+                        share_minimizer_count = float(li[3])
+                        share_minimizer_dict[i1][i2] = share_minimizer_count
+                        share_minimizer_dict[i2][i1] = share_minimizer_count
+                        i1, i2 = get_sibling_id(i1), get_sibling_id(i2)
+                        share_minimizer_dict[i1][i2] = share_minimizer_count
+                        share_minimizer_dict[i2][i1] = share_minimizer_count
         n_rows = data.shape[0]
         nbr_matrix = np.empty((n_rows, n_neighbors), dtype=np.int64)
         nbr_matrix[:, :] = -1
         for i in range(n_rows):
             row_nbr_dict = {
-                j: error_per
-                for j, error_per in error[i].items()
+                j: share_minimizer_count
+                for j, share_minimizer_count in share_minimizer_dict[i].items()
             }
             neighbors = list( 
                 sorted(row_nbr_dict, key=lambda x: row_nbr_dict[x], reverse=True)
             )[:n_neighbors]
             nbr_matrix[i, : len(neighbors)] = neighbors
+        return nbr_matrix
 
-        # ## stat 
-        # error_0 = []
-        # for read in range(0,n_rows):
-        #     i=0
-        #     for j, length in error[read].items():
-        #         if length == 0:
-        #             i +=1
-        #     error_0.append(i)
-        # error_num_stat = sum([freq for num,freq in collections.Counter(error_0).items() if num<=20])
-        # print(f'reads number whose error rate = 0 neigbor number < 20 in all reads percentage: {error_num_stat/n_rows}')
+
+class wtdbg2NearestNeighbors(_NearestNeighbors):
+    def get_neighbors(
+        self,
+        data: csr_matrix | np.ndarray,
+        n_neighbors: int,
+        paf_path: str,
+        read_indices: Mapping[str, int],
+        *,
+        min_alignment_length: int = 0,
+    ) -> np.ndarray:
+        # Calculate cumulative alignment lengths
+        alignment_lengths = collections.defaultdict(collections.Counter)
+        i=0
+        with open_gzipped(paf_path,'rt') as f:
+            for line in f:
+                li = line.strip().split('\t')
+                if len(li) > 12:
+                    if int(li[10]) >= 150 and int(li[10])/int(li[11]) >= 0.3:
+                        i1 = read_indices.get(li[0])
+                        i2 = read_indices.get(li[5])
+                        if i1 is None or i2 is None:
+                            # Assume query or target is excluded
+                            continue
+                        if li[1] == "-":
+                            i1 = get_sibling_id(i1)
+                        if li[6] == "-":
+                            i2 = get_sibling_id(i2)
+                        length = int(li[10])
+                        alignment_lengths[i1][i2] += length
+                        alignment_lengths[i2][i1] += length
+                        i1, i2 = get_sibling_id(i1), get_sibling_id(i2)
+                        alignment_lengths[i1][i2] += length
+                        alignment_lengths[i2][i1] += length
+        if len(alignment_lengths) == 0:
+            warn(f"No overlaps found from {paf_path}")
+
+        print('alignment_lengths generation done')
+        # Construct neighbor matrix
+        n_rows = data.shape[0]
+        nbr_matrix = np.empty((n_rows, n_neighbors), dtype=np.int64)
+        nbr_matrix[:, :] = -1
+        for i in range(n_rows):
+            if i % 10000 ==0:
+                print(i)
+            row_nbr_dict = {
+                j: length
+                for j, length in alignment_lengths[i].items()
+                if length >= min_alignment_length
+            }
+            neighbors = list(
+                sorted(row_nbr_dict, key=lambda x: row_nbr_dict[x], reverse=True)
+            )[:n_neighbors]
+            nbr_matrix[i, : len(neighbors)] = neighbors
+        return nbr_matrix
+    
+class MECAT2NearestNeighbors(_NearestNeighbors):
+    def get_neighbors(
+        self,
+        data: csr_matrix | np.ndarray,
+        n_neighbors: int,
+        paf_path: str,
+        read_indices: Mapping[str, int],
+        *,
+        min_indentity: float = 75,
+    ) -> np.ndarray:
+        # Calculate cumulative alignment lengths
+        identity_dict = collections.defaultdict(collections.Counter)
+        i=0
+        with open_gzipped(paf_path,'rt') as f:
+            for line in f:
+                li = line.strip().split('\t')
+                if len(li) > 10:
+                    i1 = int(li[0])*2
+                    i2 = int(li[1])*2
+                    if li[4] == '1':
+                        i1 = get_sibling_id(i1)
+                    if li[8] == '1':
+                        i2 = get_sibling_id(i2)
+                    if float(li[2]) > min_indentity:
+                        identity = float(li[2])
+                        identity_dict[i1][i2] = identity
+                        identity_dict[i2][i1] = identity
+                        i1, i2 = get_sibling_id(i1), get_sibling_id(i2)
+                        identity_dict[i1][i2] = identity
+                        identity_dict[i2][i1] = identity
+        n_rows = data.shape[0]
+        nbr_matrix = np.empty((n_rows, n_neighbors), dtype=np.int64)
+        nbr_matrix[:, :] = -1
+        for i in range(n_rows):
+            row_nbr_dict = {
+                j: identity
+                for j, identity in identity_dict[i].items()
+            }
+            neighbors = list( 
+                sorted(row_nbr_dict, key=lambda x: row_nbr_dict[x], reverse=True)
+            )[:n_neighbors]
+            nbr_matrix[i, : len(neighbors)] = neighbors
         return nbr_matrix
 
 class RPForest(_NearestNeighbors):

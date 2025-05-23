@@ -3,7 +3,9 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from snakemake_stub import *
 
-
+import sys
+sys.path.append("scripts")
+sys.path.append("../../scripts")
 import gzip, json, collections
 from typing import Sequence, Mapping, Collection
 from Bio import SeqIO
@@ -13,6 +15,9 @@ import pandas as pd
 import xxhash
 from multiprocessing import Pool, Manager
 from functools import partial
+from accelerate import open_gzipped
+from fasta_load import FastaLoader
+import gc,time
 
 def init_reverse_complement():
     TRANSLATION_TABLE = str.maketrans("ACTGactg", "TGACtgac")
@@ -37,63 +42,93 @@ def load_reads(fasta_path: str):
     read_sequences = []
     read_names = []
     read_orientations = []
+    loader = FastaLoader(file_path=fasta_path)
+    for record in loader:  # 迭代获取每条序列
+        seq = str(record.sequence)
+        read_sequences.append(seq)
+        read_names.append(record.name)
+        read_orientations.append("+")
 
-    with gzip.open(fasta_path, "rt") as handle:  # Open gzipped file in text mode
-        for record in SeqIO.parse(handle, "fasta"):
-            seq = str(record.seq)
-            read_sequences.append(seq)
-            read_names.append(record.id)
-            read_orientations.append("+")
-
-            # Include reverse complement
-            read_sequences.append(reverse_complement(seq))
-            read_names.append(record.id)
-            read_orientations.append("-")
+        # Include reverse complement
+        read_sequences.append(reverse_complement(seq))
+        read_names.append(record.name)
+        read_orientations.append("-")
 
     return read_names, read_orientations, read_sequences
 
 def process_sequence(args, k, seed, all_kmer_number, max_hash):
     row_idx, seq = args
     seq_counts = collections.defaultdict(int)
-    
+    kmers = (seq[p:p+k] for p in range(len(seq) - k + 1))
     # Count kmers in this sequence
-    for p in range(len(seq) - k + 1):
-        kmer = seq[p:p+k]
-        hashed = xxhash.xxh64(kmer, seed=seed).intdigest()
+    for kmer in kmers:
+        hashed = xxhash.xxh3_64(kmer, seed=seed).intdigest()
         if hashed <= max_hash:
-            seq_counts[hashed] += 1 
-    
-    # Return non-zero entries for this sequence
-    return [(row_idx, hashed, count) for hashed, count in seq_counts.items()]
+            seq_counts[hashed] += 1
+    if row_idx % 200_000 == 0:
+        print(row_idx)
+
+    count = len(seq_counts)
+    if count == 0:
+        return np.empty((0, 3), dtype=np.uint64)
+    result = np.empty((count, 3), dtype=np.uint64)
+    for i, (hashed, cnt) in enumerate(seq_counts.items()):
+        result[i] = [row_idx, hashed, cnt]
+    return result
 
 def build_sparse_matrix_multiprocess(read_sequences, k, seed, sample_fraction, min_multiplicity, n_processes):
     all_kmer_number = 2**64
     max_hash = all_kmer_number * sample_fraction
-    
-    # Parallel processing
-    with Pool(n_processes) as pool:
-        func = partial(process_sequence, k=k, seed=seed, 
-                      all_kmer_number=all_kmer_number, max_hash=max_hash)
-        results = pool.map(func, enumerate(read_sequences))
-    
-    # Flatten results and build CSR matrix
-    row_ind = [r[0] for result in results for r in result]
-    col_ind = [r[1] for result in results for r in result]
-    data = [r[2] for result in results for r in result]
-    print('all feature matrix building done')
-    unique_cols, re_col_ind = np.unique(col_ind, return_inverse=True)
-    # Determine matrix shape
+    # Parallel processing with imap
+    time1 = time.time()
+    with Pool(n_processes,maxtasksperchild=100) as pool:
+        func = partial(process_sequence, 
+                      k=k, seed=seed, 
+                      all_kmer_number=all_kmer_number, 
+                      max_hash=max_hash)
+        
+        # Process results incrementally
+        row_ind, col_ind, data = [], [], []
+        for result in pool.imap(func, enumerate(read_sequences), chunksize=1000):
+            if result.size > 0:
+                row_ind.append(result[:, 0])
+                col_ind.append(result[:, 1])
+                data.append(result[:, 2])
+        pool.close()
+        pool.join()
+        gc.collect()
+
+    time2 = time.time()
+    print(f'stage1(process reads) elapsed time: {time2-time1}')
+        # Concatenate all results
+    row_ind = np.concatenate(row_ind)
+    col_ind = np.concatenate(col_ind)
+    data = np.concatenate(data)
+    time3 = time.time()
+    print(f'stage2(concat all ind) elapsed time: {time3-time2}')
+
+    # Build sparse matrix
+    re_col_ind = pd.factorize(col_ind)[0].tolist()
     n_rows = len(read_sequences)
-    n_cols = len(unique_cols)
-    _feature_matrix = sp.csr_matrix((data, (row_ind, re_col_ind)),
+    n_cols = max(re_col_ind) + 1
+    time4 = time.time()
+    print(f'stage3(factorize) elapsed time: {time4-time3}')
+
+    _feature_matrix = sp.csr_matrix(
+        (data, (row_ind, re_col_ind)),
         shape=(n_rows, n_cols),
         dtype=np.int32
     )
-    print(_feature_matrix.shape)
+    time5 = time.time()
+    print(f'stage4(building feature matrix) elapsed time: {time5-time4}')
+
+    # Filter by multiplicity
     col_sums = _feature_matrix.sum(axis=0).A1
-    mask = col_sums >= min_multiplicity 
-    feature_matrix = _feature_matrix[:, mask] 
+    mask = col_sums >= min_multiplicity
+    feature_matrix = _feature_matrix[:, mask]
     print(feature_matrix.shape)
+    time6 = time.time()
+    print(f'stage5(filter feature matrix) elapsed time: {time6-time5}')
     return feature_matrix
 
 def encode_reads(

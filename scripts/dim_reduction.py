@@ -3,7 +3,7 @@ import scipy as sp
 import numpy as np
 from numpy.typing import NDArray
 from scipy import sparse
-from scipy.sparse import csr_matrix
+from scipy.sparse import csr_matrix,isspmatrix_coo
 from sklearn.preprocessing import normalize as normalize_function
 import anndata
 import sklearn
@@ -15,7 +15,10 @@ from sklearn.decomposition import PCA
 import sharedmem
 import collections
 from memory_profiler import profile
-
+from typing import Union
+import gc
+from joblib import Parallel, delayed
+import os
 
 def split_sparse_matrix_by_rows(sparse_matrix: csr_matrix, num_splits: int = 10):
     """
@@ -181,7 +184,74 @@ class Split_GRP(_DimensionReduction):
         embedding = np.vstack([reduced_part_fm[i] for i in range(n_split)])
         return embedding
 
-class SparseRandomProjection(_DimensionReduction):
+class mp_SparseRandomProjection:
+    def _fit_transformer(self,
+                         n_features: int,
+                         n_dimensions,
+                         density,
+                         random_state
+                         ):
+        """初始化 scikit-learn 的投影器（仅需特征维度）"""
+        self.transformer_ = random_projection.SparseRandomProjection(
+            n_components=n_dimensions,
+            density=density,
+            random_state=random_state
+        )
+        # 用虚拟数据拟合（避免加载全矩阵）
+        dummy_data = csr_matrix((1, n_features))
+        self.transformer_.fit(dummy_data)
+
+    def _process_batch(self, temp_dir, batch_idx: int, batch_data: csr_matrix) -> str:
+        # 降维计算
+        _reduced = self.transformer_.transform(batch_data)
+        reduced = _reduced.toarray()
+        random_num = np.random.randint(1,10000,size=1)[0]
+        # 保存降维结果到临时文件
+        output_path = os.path.join(temp_dir ,f"tmp{random_num}_batch_{batch_idx}.npy")
+        np.save(output_path, reduced)
+        
+        # 立即释放内存
+        del batch_data, reduced
+        gc.collect()
+        
+        return output_path
+
+    def transform(self,
+                  data: csr_matrix | NDArray,
+                  n_dimensions: int,
+                  random_state: int = 521022,
+                  density: float ='auto',
+                  temp_dir: str = "./temp",
+                  batch_size: int = 10000,
+                  n_jobs: int = 1
+                  ) -> np.ndarray:
+        # 初始化投影器
+        os.makedirs(temp_dir, exist_ok=True)
+        n_samples, n_features = data.shape
+        self._fit_transformer(n_features,n_dimensions,density,random_state)
+        
+        # 分块处理
+        batch_indices = list(range(0, n_samples, batch_size))
+        
+        # 分块处理
+        print(data.format)
+        if isspmatrix_coo(data):
+                data = data.tocsr()  
+        batch_indices = range(0, n_samples, batch_size)
+        batch_paths = Parallel(n_jobs=n_jobs)(
+            delayed(self._process_batch)( temp_dir, idx // batch_size ,data[idx: idx + batch_size])
+            for idx in batch_indices
+        )
+        # 合并所有分块结果
+        result = np.vstack([np.load(path,allow_pickle=True) for path in batch_paths])
+        print(result.shape)
+        # 清理临时文件
+        for path in batch_paths:
+            os.remove(path)
+        return result
+
+
+class SparseRP(_DimensionReduction):
     def transform(
         self, data: csr_matrix | NDArray, n_dimensions: int,density: float ='auto'):
         reducer = random_projection.SparseRandomProjection(n_components=n_dimensions, density=density)

@@ -168,7 +168,7 @@ rule hash_kmer_encoding:
         seed=562104830,
     wildcard_constraints:
         k=r"\d+",
-    threads: 32
+    threads: 16
     conda:
         "envs/evaluate.yaml"
     script:
@@ -221,8 +221,8 @@ rule run_minimap2_ava:
     input:
         fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
     output:
-        paf_minimap2="data/minimap2/{sample}/{region}/{platform}/alignment.paf",
-        minimap2_log="data/minimap2/{sample}/{region}/{platform}/minimap2.log",
+        paf_minimap2="data/minimap2/{sample}/{region}/{platform}/kmer_k21/alignment.paf",
+        minimap2_log="data/minimap2/{sample}/{region}/{platform}/kmer_k21/minimap2_time.log",
     params:
         preset="ava-ont",
     conda:
@@ -232,16 +232,6 @@ rule run_minimap2_ava:
         """
         /usr/bin/time -v -o {output.minimap2_log} \
         minimap2 -x {params.preset} -t {threads} {input.fasta} {input.fasta} > {output.paf_minimap2}
-        """
-        
-rule filter_paf:
-    input:
-        paf_minimap2="data/minimap2/{sample}/{region}/{platform}/alignment.paf",
-    output:
-        filter_minimap2="data/minimap2/{sample}/{region}/{platform}/filter_alignment.paf.gz",
-    shell:
-        """
-        awk '$10 > 150 && ($10/$11) > 0.3' {input.paf_minimap2} | gzip > {output.filter_minimap2}
         """
 
 rule run_daligner:
@@ -274,17 +264,102 @@ rule run_mhap:
     input:
         fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
     output:
-        txt="data/mhap/{sample}/{region}/{platform}/kmer_k11/mhap.txt",
-        log="data/mhap/{sample}/{region}/{platform}/kmer_k11/mhap_time.log",
+        txt=temp("data/MHAP/{sample}/{region}/{platform}/kmer_k21/alignment.txt"),
+        txt_gz="data/MHAP/{sample}/{region}/{platform}/kmer_k21/alignment.txt.gz",
+        log="data/MHAP/{sample}/{region}/{platform}/kmer_k21/MHAP_time.log",
     threads:64
     shell:
         """
         /usr/bin/time -v -o {output.log} \
-        java -Xmx128g -server -jar ~/docker_dir/biosoft/mhap-2.1.1.jar \
+        java -server  -Xms128g -jar ~/docker_dir/biosoft/mhap-2.1.1.jar \
         -s {input.fasta}\
-        --num-threads {threads} \
+        --repeat-weight 0.9 --repeat-idf-scale 10 -k 16 \
         --store-full-id \
+        --num-hashes 768 \
+        --num-min-matches 2 \
+        --threshold 0.73 \
+        --filter-threshold 0.0000001 \
+        --ordered-sketch-size 1536 \
+        --ordered-kmer-size 12 \
+        --min-olap-length 500 \
+        --num-threads {threads} \
         > {output.txt}
+        gzip -c {output.txt} > {output.txt_gz}
+        """
+
+rule run_xread:
+    input:
+        fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
+    output:
+        paf="data/xRead/{sample}/{region}/{platform}/kmer_k21/alignment.paf",
+        log="data/xRead/{sample}/{region}/{platform}/kmer_k21/xRead_time.log",
+    threads:64
+    shell:
+        """
+        /usr/bin/time -v -o {output.log} \
+        ~/docker_dir/biosoft/xRead-v1.0.0/xRead {input.fasta} -k 19 -w 40 -p 2 -b 30 -m 30 -n 20 -t {threads} -M {threads} \
+        > {output.paf}
+        """
+
+rule run_mecat2:
+    input:
+        fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
+    output:
+        wd=directory("data/MECAT2/{sample}/{region}/{platform}/kmer_k21"),
+        txt=temp("data/MECAT2/{sample}/{region}/{platform}/kmer_k21/alignment.txt"),
+        txt_gz="data/MECAT2/{sample}/{region}/{platform}/kmer_k21/alignment.txt.gz",
+        log="data/MECAT2/{sample}/{region}/{platform}/kmer_k21/MECAT2_time.log",
+    threads:64
+    shell:
+        """
+        gunzip -c {input.fasta} > {output.wd}/reads.fasta
+        /usr/bin/time -v -o {output.log} \
+        ~/docker_dir/biosoft/MECAT2/Linux-amd64/bin/mecat2pw \
+        -d {output.wd}/reads.fasta -w {output.wd} -t {threads} -o {output.txt} -n 50 
+        gzip -c {output.txt} > {output.txt_gz}
+        rm {output.wd}/reads.fasta
+        """
+
+rule run_blend:
+    input:
+        fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
+    output:
+        paf="data/BLEND/{sample}/{region}/{platform}/kmer_k21/alignment.paf",
+        log="data/BLEND/{sample}/{region}/{platform}/kmer_k21/BLEND_time.log",
+    conda:
+        "envs/blend.yaml"
+    threads: 64
+    shell:
+        """
+        /usr/bin/time -v -o {output.log} \
+        blend -x ava-ont {input.fasta} {input.fasta} -t {threads} > {output.paf}
+        """
+
+rule run_wtdbg2:
+    input:
+        fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
+    output:
+        paf="data/wtdbg2/{sample}/{region}/{platform}/kmer_k21/alignment.txt.gz",
+        log="data/wtdbg2/{sample}/{region}/{platform}/kmer_k21/wtdbg2_time.log",
+    params:
+        prefix = "data/wtdbg2/{sample}/{region}/{platform}/kmer_k21/tmp",
+    threads: 8
+    shell:
+        """
+        /usr/bin/time -v -o {output.log} \
+        ~/docker_dir/biosoft/wtdbg2-2.5/wtdbg2 -p 21 -k 0 -AS 4 -K 0.05 -s 0.5 -t {threads} \
+        -i {input.fasta} -o {params.prefix}
+        mv {params.prefix}.alignments.gz  {output.paf}
+        """
+
+rule filter_paf:
+    input:
+        paf="data/{biosoft}/{sample}/{region}/{platform}/kmer_k21/alignment.paf",
+    output:
+        filter_paf="data/{biosoft}/{sample}/{region}/{platform}/kmer_k21/filter_alignment.paf.gz",
+    shell:
+        """
+        awk '$10 > 150 && ($10/$11) > 0.3' {input.paf} | gzip > {output.filter_paf}
         """
 rule get_neighbors:
     input:
@@ -297,7 +372,7 @@ rule get_neighbors:
     threads: 64
     wildcard_constraints:
         sample=r'(CHM13|rice|ara)',
-        # method=r"^M[^/]+",
+        method=r"^(?!(minimap2|xRead|BLEND|MHAP|MECAT2|wtdbg2)$)[^/]+$",
     conda:
         "envs/evaluate.yaml"
     shell:
@@ -306,48 +381,50 @@ rule get_neighbors:
         python workflow/scripts/get_neighbors.smk.py --input {input.feature_matrix} {input.metadata} \
         --output {output.nbr_indice} {output.time} --method {wildcards.method} --threads {threads}
         """
-
-rule get_neighbors_minimap2:
+        
+rule get_neighbors_paf:
     input:
         feature_matrix="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/feature_matrix.npz",
         metadata="data/regional_reads/{sample}/{region}/{platform}/metadata.tsv.gz",
-        paf_minimap2="data/minimap2/{sample}/{region}/{platform}/filter_alignment.paf.gz",
+        paf="data/{biosoft}/{sample}/{region}/{platform}/{encoding}/filter_alignment.paf.gz",
     output:
-        nbr_indice="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/Minimap2_nbr_matrix.npz",
-        time="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/Minimap2_nn_time.json",
-        log="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/Minimap2_time.log",
+        nbr_indice="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{biosoft}_nbr_matrix.npz",
+        time="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{biosoft}_nn_time.json",
+        log="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{biosoft}_time.log",
     threads: 1
     wildcard_constraints:
         method=r"[^/]+",
+        biosoft=r'(minimap2|xRead|BLEND)',
     conda:
         "envs/evaluate.yaml"
     shell:
         """
         /usr/bin/time -v -o {output.log} \
-        python workflow/scripts/get_neighbors.smk.py --input {input.feature_matrix} {input.metadata} {input.paf_minimap2} \
-        --output {output.nbr_indice} {output.time} --method Minimap2 --threads {threads}
+        python workflow/scripts/get_neighbors.smk.py --input {input.feature_matrix} {input.metadata} {input.paf} \
+        --output {output.nbr_indice} {output.time} --method {wildcards.biosoft} --threads {threads}
         """
 
-rule get_neighbors_mhap:
+rule get_neighbors_txt:
     input:
         feature_matrix="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/feature_matrix.npz",
         metadata="data/regional_reads/{sample}/{region}/{platform}/metadata.tsv.gz",
-        paf_minimap2="data/mhap/{sample}/{region}/{platform}/{encoding}/mhap.txt",
+        paf_minimap2="data/{biosoft}/{sample}/{region}/{platform}/{encoding}/alignment.txt.gz",
     output:
-        nbr_indice="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/MHAP_nbr_matrix.npz",
-        time="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/MHAP_nn_time.json",
-        log="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/MHAP_time.log",
-    threads: 64
+        nbr_indice="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{biosoft}_nbr_matrix.npz",
+        time="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{biosoft}_nn_time.json",
+        log="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{biosoft}_time.log",
+    threads: 1
     wildcard_constraints:
         method=r"[^/]+",
-        sample=r'(CHM13|rice|ara)'
+        sample=r'(CHM13|rice|ara)',
+        biosoft=r'(wtdbg2|MECAT2|MHAP)',
     conda:
         "envs/evaluate.yaml"
     shell:
         """
         /usr/bin/time -v -o {output.log} \
         python workflow/scripts/get_neighbors.smk.py --input {input.feature_matrix} {input.metadata} {input.paf_minimap2} \
-        --output {output.nbr_indice} {output.time} --method MHAP --threads {threads}
+        --output {output.nbr_indice} {output.time} --method {wildcards.biosoft} --threads {threads}
         """
 
 rule get_neighbors_params_tuning:
@@ -408,7 +485,7 @@ rule evaluate_configs:
         ref_graph="data/regional_reads/{sample}/{region}/{platform}/reference_graph.gpickle",
         nbr_indice="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{method}_nbr_matrix.npz",
     output:
-        integral_stat="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{method}_integral_stat.tsv",
+        integral_stat="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{method}_full_stat.tsv",
     wildcard_constraints:
         method=r'[^/]+',
     conda:
@@ -423,7 +500,7 @@ use rule evaluate_configs as evaluate_configs_params_tuning with:
         ref_graph="data/regional_reads/{sample}/{region}/{platform}/reference_graph.gpickle",
         nbr_indice="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{config}/{method}_nbr_matrix.npz",
     output:
-        integral_stat="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{config}/{method}_integral_stat.tsv",
+        integral_stat="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{config}/{method}_full_stat.tsv",
 
 rule get_stat:
     input:
@@ -453,6 +530,29 @@ rule minimap2_for_all:
         'CHM13/chr1_248M/filter3_real_cyclone','CHM13/chr1_248M/filter3_real_ONT','CHM13/chr1_248M/filter3_real_pb',
         'CHM13/all/filter3_real_cyclone','CHM13/all/filter3_real_ONT','CHM13/all/filter3_real_pb'])
 
+rule test_biosoft:
+    input:
+        "data/xRead/ara/all/filter3_real_ONT/kmer_k21/filter_alignment.paf.gz",
+        "data/minimap2/ara/all/filter3_real_ONT/kmer_k21/filter_alignment.paf.gz",
+        "data/BLEND/ara/all/filter3_real_ONT/kmer_k21/filter_alignment.paf.gz",
+        "data/MECAT2/ara/all/filter3_real_ONT/kmer_k21/alignment.txt.gz",
+        "data/MHAP/ara/all/filter3_real_ONT/kmer_k21/alignment.txt.gz",
+        "data/wtdbg2/ara/all/filter3_real_ONT/kmer_k21/alignment.txt.gz"
+
+rule test_biosoft2:
+    input:
+        expand("data/evaluation64/CHM13/HLA/filter3_real_pb/kmer_k21/{biosoft}_full_stat.tsv",
+        biosoft=['minimap2','xRead','BLEND','MHAP','MECAT2','wtdbg2'])
+
+rule wgs:
+    input:
+        expand("data/evaluation64/{region}/hash_k21/ann_NNDescent_config3/NNDescent_Cosine_SparseRP_3000d_IDF_integral_stat.tsv",
+        region=['ara/all/filter3_real_ONT','rice/all/filter3_real_ONT_new'])
+
+rule xread:
+    input:
+        expand("data/xRead/{region}/kmer_k21/alignment.paf",
+        region=['CHM13/all/filter3_real_cyclone','CHM13/all/filter3_real_ONT'])
 
 rule mhap:
     input:
@@ -511,15 +611,26 @@ rule all_test1:
 #     input:
 rule all_test2:
     input:
-        expand("data/evaluation64/{region}/kmer_k21/Exact_Cosine_SparseRP_{dim}d_IDF_integral_stat.tsv",
-        region=['CHM13/IGK/filter3_real_cyclone','CHM13/IGK/filter3_real_ONT','CHM13/IGK/filter3_real_pb',
-        'CHM13/HLA/filter3_real_cyclone','CHM13/HLA/filter3_real_ONT','CHM13/HLA/filter3_real_pb',
-        'ara/chr1_30M/filter3_real_ONT','rice/chr1_43M/filter3_real_ONT_new',
-        'CHM13/chr22_51M/filter3_real_cyclone','CHM13/chr22_51M/filter3_real_ONT','CHM13/chr22_51M/filter3_real_pb'],
-        dim=[100,500,1000,2000,3000,6000]),
-        # expand("data/evaluation64/{region}/kmer_k11/ann_NNDescent_config3/NNDescent_Cosine_SparseRP_{dim}d_IDF_integral_stat.tsv",
-        # region=['CHM13/chr1_248M/filter3_real_cyclone','CHM13/chr1_248M/filter3_real_ONT','CHM13/chr1_248M/filter3_real_pb'],
+        # expand("data/evaluation64/{region}/kmer_k21/Exact_Cosine_SparseRP_{dim}d_IDF_integral_stat.tsv",
+        # region=['CHM13/IGK/filter3_real_cyclone','CHM13/IGK/filter3_real_ONT','CHM13/IGK/filter3_real_pb',
+        # 'CHM13/HLA/filter3_real_cyclone','CHM13/HLA/filter3_real_ONT','CHM13/HLA/filter3_real_pb',
+        # 'ara/chr1_30M/filter3_real_ONT','rice/chr1_43M/filter3_real_ONT_new',
+        # 'CHM13/chr22_51M/filter3_real_cyclone','CHM13/chr22_51M/filter3_real_ONT','CHM13/chr22_51M/filter3_real_pb'],
         # dim=[100,500,1000,2000,3000,6000]),
+        expand("data/evaluation64/{region}/kmer_k11/ann_NNDescent_config3/NNDescent_Cosine_SparseRP_{dim}d_IDF_integral_stat.tsv",
+        region=['CHM13/chr1_248M/filter3_real_cyclone'],
+        dim=[100,500,1000,2000,3000,6000]),
+rule all_test3:
+    input:
+        expand("data/evaluation64/CHM13/chr1_248M/filter3_real_cyclone/kmer_k21/ann_NNDescent_{config}/NNDescent_Cosine_SparseRP_2000d_IDF_integral_stat.tsv",
+        config=['default','config1','config2','config3','config4','config5']),
+        expand("data/evaluation64/CHM13/chr1_248M/filter3_real_cyclone/kmer_k21/ann_{config}/PQ_Cosine_SparseRP_2000d_IDF_integral_stat.tsv",
+        config=['PQ_config1','PQ_config2','PQ_config5','PQ_default']),
+        expand("data/evaluation64/CHM13/chr1_248M/filter3_real_cyclone/kmer_k21/ann_{config}/HNSW_Cosine_SparseRP_2000d_IDF_integral_stat.tsv",
+        config=['HNSW_config1','HNSW_config2','HNSW_config3','HNSW_config4','HNSW_config5','HNSW_default']),
+        expand("data/evaluation64/CHM13/chr1_248M/filter3_real_cyclone/kmer_k21/ann_{config}/IVFPQ_Cosine_SparseRP_2000d_IDF_integral_stat.tsv",
+        config=['IVFPQ_config1','IVFPQ_config2','IVFPQ_config3','IVFPQ_config4','IVFPQ_config5','IVFPQ_default'])
+
 rule dimension_method2_1:
     input:
         expand("data/evaluation64/{region}/kmer_k21/{method}_nbr_matrix.npz",
@@ -580,18 +691,16 @@ rule IVFPQ_PT5:
 ##先测参数
 rule ann_test7:
     input:
-        expand("data/evaluation64/{region}/kmer_k21/{method}_nbr_matrix.npz",
-        method=['ann_NNDescent_config3/NNDescent_Cosine_SparseRP_3000d_IDF',
-                'ann_HNSW_config4/HNSW_Cosine_SparseRP_3000d_IDF',
-                'ann_PQ_config5/PQ_Cosine_SparseRP_3000d_IDF',
-                'ann_IVFPQ_config4/IVFPQ_Cosine_SparseRP_3000d_IDF'],
+        expand("data/evaluation64/{region}/kmer_k21/{method}_integral_stat.tsv",
+        method=['ann_NNDescent_config3/NNDescent_Cosine_SparseRP_1000d_IDF',
+                'ann_HNSW_config1/HNSW_Cosine_SparseRP_1000d_IDF',
+                'ann_PQ_config2/PQ_Cosine_SparseRP_1000d_IDF',
+                'ann_IVFPQ_config5/IVFPQ_Cosine_SparseRP_1000d_IDF'],
         region=['CHM13/IGK/filter3_real_cyclone','CHM13/IGK/filter3_real_ONT','CHM13/IGK/filter3_real_pb',
         'CHM13/HLA/filter3_real_cyclone','CHM13/HLA/filter3_real_ONT','CHM13/HLA/filter3_real_pb',
         'ara/chr1_30M/filter3_real_ONT','rice/chr1_43M/filter3_real_ONT_new',
         'CHM13/chr22_51M/filter3_real_cyclone','CHM13/chr22_51M/filter3_real_ONT','CHM13/chr22_51M/filter3_real_pb',
         'CHM13/chr1_248M/filter3_real_cyclone','CHM13/chr1_248M/filter3_real_ONT','CHM13/chr1_248M/filter3_real_pb'])
-
-
 
 rule test_k:
     input:

@@ -1,5 +1,5 @@
 from evaluate import NearestNeighborsConfig
-from dim_reduction import SpectralEmbedding, scBiMapEmbedding,GaussianRandomProjection,SparseRandomProjection,SimHash_Dimredu,PCA,isomap,umapEmbedding,Split_GRP
+from dim_reduction import SpectralEmbedding, scBiMapEmbedding,GaussianRandomProjection,SparseRP,SimHash_Dimredu,PCA,isomap,umapEmbedding,mp_SparseRandomProjection
 from nearest_neighbors import ExactNearestNeighbors,PAFNearestNeighbors,SimHash,HNSW,ProductQuantization,NNDescent,WeightedLowHash,IVFProductQuantization
 max_bucket_size = 20
 def parse_string_to_config(input_string: str,
@@ -16,9 +16,9 @@ def parse_string_to_config(input_string: str,
     'IVFPQ':IVFProductQuantization,
     'Euclidean':'euclidean',
     'Cosine':'cosine',
-    'SplitGRP':Split_GRP,
     'GaussianRP':GaussianRandomProjection,
-    'SparseRP':SparseRandomProjection,
+    'SparseRP':SparseRP,
+    'mpSRP':mp_SparseRandomProjection,
     'scBiMap':scBiMapEmbedding,
     'Spectural':SpectralEmbedding,
     'SimHash_Dimredu':SimHash_Dimredu,
@@ -27,7 +27,7 @@ def parse_string_to_config(input_string: str,
     'umap':umapEmbedding,
     }
     parts = input_string.split('_')
-    if len(parts) == 5:
+    if len(parts) == 5: ## e.g. Exact_Cosine_SparseRP_3000d_IDF
         nearest_neighbors_method = mydict[parts[0]]
         description = input_string
         tfidf = parts[4]
@@ -38,7 +38,8 @@ def parse_string_to_config(input_string: str,
         
         nearest_neighbors_kw = dict(metric=mydict[parts[1]])
         nearest_neighbors_kw.update(nearest_neighbors_parameter)
-
+        if dimension_reduction_method == 'SparseRP':
+            dimension_reduction_kw.update()
         myNearestNeighborsConfig = NearestNeighborsConfig(
         nearest_neighbors_method=nearest_neighbors_method,
         description=description,
@@ -46,8 +47,8 @@ def parse_string_to_config(input_string: str,
         dimension_reduction_method=dimension_reduction_method,
         dimension_reduction_kw=dimension_reduction_kw,
         nearest_neighbors_kw=nearest_neighbors_kw
-    )
-    elif len(parts) == 4:
+        )
+    elif len(parts) == 4: ## e.g. Exact_Cosine_None_IDF
         nearest_neighbors_method = mydict[parts[0]]
         tfidf = parts[3]
         if parts[0] == 'MinHash':

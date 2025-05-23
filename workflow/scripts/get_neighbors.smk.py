@@ -14,9 +14,11 @@ sys.path.append("scripts")
 sys.path.append("../../scripts")
 from str2config import parse_string_to_config
 from nearest_neighbors import (
-    ExactNearestNeighbors,
+    idPAFNearestNeighbors,
     PAFNearestNeighbors,
-    MHAPNearestNeighbors
+    MHAPNearestNeighbors,
+    MECAT2NearestNeighbors,
+    wtdbg2NearestNeighbors
 )
 from evaluate import NearestNeighborsConfig, compute_nearest_neighbors
 
@@ -49,6 +51,7 @@ time_path = args.output[1]
 
 method = args.method
 
+## read ANN method parameters file
 ANN_threads_param = {'n_jobs':args.threads}
 if args.ann_parameter:
     ANN_parameter_file = args.ann_parameter
@@ -59,6 +62,7 @@ else:
     ANN_parameter = ANN_threads_param
 print(f'ANN Params: {ANN_parameter}')
 
+## read dimension reduction method parameters file
 if args.dim_parameter:
     dim_parameter_file = args.dim_parameter
     with open(dim_parameter_file, 'r') as f:
@@ -66,6 +70,12 @@ if args.dim_parameter:
     print(f'Dimension reductiom params: {dim_parameter}')
 else:
     dim_parameter = {}
+
+## process SRP multi-threads and batch process
+if 'mpSRP' in method:
+    dim_parameter.update({'temp_dir':os.path.dirname(npz_path),
+                          'batch_size':100_000,
+                          'n_jobs':3})
 
 print('start loading feature matrix...')
 feature_matrix = sp.sparse.load_npz(npz_path)
@@ -80,17 +90,25 @@ else:
     real_dim_parameter = dim_parameter
 
 print(method)
-if method in ['Minimap2','MHAP']:
+
+if method in ['minimap2','xRead','BLEND','MHAP','MECAT2','wtdbg2']:
+    method_class_dict = {'MHAP':MHAPNearestNeighbors,
+                     'MECAT2':MECAT2NearestNeighbors,
+                     'wtdbg2':wtdbg2NearestNeighbors}
     elapsed_time = {}
     start_time = time.time()
     meta_df = pd.read_table(tsv_path).iloc[:MAX_SAMPLE_SIZE, :].reset_index()
     read_indices = {read_name: read_id for read_id, read_name in meta_df['read_name'].items()}
-    if method == 'Minimap2':
+    if method in ['minimap2','BLEND']:
         neighbor_indices = PAFNearestNeighbors().get_neighbors(
                 data=feature_matrix, n_neighbors=max_n_neighbors, paf_path=paf_path, read_indices=read_indices
             )
+    elif method == 'xRead':
+        neighbor_indices = idPAFNearestNeighbors().get_neighbors(
+                data=feature_matrix, n_neighbors=max_n_neighbors, paf_path=paf_path, read_indices=read_indices
+            )
     else:
-        neighbor_indices = MHAPNearestNeighbors().get_neighbors(
+        neighbor_indices = method_class_dict[method]().get_neighbors(
                 data=feature_matrix, n_neighbors=max_n_neighbors, paf_path=paf_path, read_indices=read_indices
             )
     elapsed_time['nearest_neighbors'] = time.time() - start_time
