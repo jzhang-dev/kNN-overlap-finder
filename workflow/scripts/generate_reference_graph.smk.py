@@ -1,18 +1,15 @@
 import sys,pickle
-import networkx as nx
 import pandas as pd
-import matplotlib.pyplot as plt
 
 sys.path.append("scripts")
 sys.path.append("../../scripts")
 
-from graph import OverlapGraph, GenomicInterval, get_overlap_statistics, remove_false_edges,get_neighbor_overlap_bases,get_precision
+from graph import OverlapGraph, GenomicInterval
 
 tsv_path = snakemake.input['metadata']
 ref_graph_path = snakemake.output['ref_graph']
 
 meta_df = pd.read_table(tsv_path)
-
 
 def get_read_intervals(meta_df):
     read_intervals = {

@@ -8,32 +8,61 @@ from dataclasses import dataclass, field
 import numpy as np
 from numpy import ndarray
 import sharedmem
-import re
-
+import gc
+from scipy.sparse import diags
 from nearest_neighbors import _NearestNeighbors, ExactNearestNeighbors
-from dim_reduction import _DimensionReduction, SpectralEmbedding, scBiMapEmbedding
-from graph import OverlapGraph, get_overlap_statistics
-from align import cWeightedSemiglobalAligner, run_multiprocess_alignment
+from dim_reduction import _DimensionReduction
 
-def manual_tf(data:csr_matrix):
-    row_sums = np.sum(data, axis=1)
-    tf_data = data / row_sums.reshape(-1, 1)
-    tf_data = csr_matrix(tf_data) 
-    return tf_data
 
-def manual_idf(data:csr_matrix):
-    binary_matrix = csr_matrix((np.ones_like(data.data), data.indices, data.indptr), shape=data.shape)
-    col_sums = binary_matrix.sum(axis=0).A1
-    N = binary_matrix.shape[0]
-    idf = np.log((N + 1) / (col_sums + 1)) + 1 
-    idf = idf.astype(binary_matrix.dtype)
-    _data = binary_matrix.multiply(idf) 
-    return _data
+def tf_transform(feature_matrix: csr_matrix):
+    row_sums = feature_matrix.sum(axis=1).A1
+    row_sums = row_sums.reshape(-1, 1)
+    feature_matrix /= row_sums
+    feature_matrix = feature_matrix.tocsr()
+    return feature_matrix
+
+
+def idf_transform(feature_matrix: csr_matrix, idf=None):
+    if idf is None:
+        # Memory-efficient column sum
+        col_sums = np.asarray(feature_matrix.sum(axis=0)).ravel()
+        assert feature_matrix.shape is not None
+        nrow = feature_matrix.shape[0]
+        
+        idf = np.log(nrow / (col_sums.astype(np.float32) + 1e-12)).astype(np.float32)
+    
+    # Sparse matrix multiplication (memory-efficient)
+    idf_diag = diags(idf, format='csr')
+    feature_matrix = feature_matrix.dot(idf_diag)
+    return feature_matrix, idf
+
+def tfidf_transform(feature_matrix: csr_matrix, idf=None):
+    if idf is None:
+        binary_matrix = feature_matrix.copy()
+        binary_matrix[binary_matrix > 0] = 1
+        # Memory-efficient column sum
+        col_sums = np.asarray(binary_matrix.sum(axis=0)).ravel()
+        assert binary_matrix.shape is not None
+        nrow = binary_matrix.shape[0]
+        
+        idf = np.log(nrow / (col_sums.astype(np.float32) + 1e-12)).astype(np.float32)
+    
+    idf_diag = diags(idf, format='csr')
+
+    row_sums = feature_matrix.sum(axis=1).A1
+    row_sums = row_sums.reshape(-1, 1)
+    feature_matrix /= row_sums
+    feature_matrix = feature_matrix.tocsr()
+
+    feature_matrix = feature_matrix.dot(idf_diag)
+
+    return feature_matrix, idf_diag
+
 
 @dataclass
 class NearestNeighborsConfig:
     description: str = ""
-    tfidf: Literal["TF","IDF","TF-IDF",'None'] = 'None',
+    tfidf: Literal["TF","IDF","TF-IDF",'binary','count'] = 'count',
     dimension_reduction_method: Type[_DimensionReduction] | None = None
     dimension_reduction_kw: dict = field(default_factory=dict, repr=False)
     nearest_neighbors_method: Type[_NearestNeighbors] = ExactNearestNeighbors
@@ -43,49 +72,49 @@ class NearestNeighborsConfig:
         self, data: csr_matrix, n_neighbors: int, *, sample_query=False, verbose=True
     ) -> tuple[ndarray, Mapping[str, float], Mapping[str, float]]:
         elapsed_time = {}
-        peak_memory = {} # TODO
 
-        _data: csr_matrix | ndarray = data.copy()
         start_time = time.time()
-
-        if self.tfidf == 'TF':
-            print("TF transform.")
-            prepro_data = manual_tf(_data)
-        elif self.tfidf == 'binary':
-            prepro_data = csr_matrix((np.ones_like(_data.data), _data.indices, _data.indptr), shape=_data.shape)
-        elif self.tfidf == 'count':
-            prepro_data = _data
-        elif self.tfidf == 'IDF':
-            print("manually IDF transform.")
-            _data = csr_matrix((np.ones_like(_data.data), _data.indices, _data.indptr), shape=_data.shape)
-            prepro_data = manual_idf(_data)
-        elif self.tfidf == 'TF-IDF':
-            print("TF-IDF transform.") 
-            _data = manual_tf(_data)
-            prepro_data = manual_idf(_data)
+        if self.tfidf == "IDF":
+            data[data > 0] = 1
+            data, _ = idf_transform(data)
+        elif self.tfidf == "TF-IDF":
+            data, _ = tfidf_transform(data)
+        elif self.tfidf == "binary":
+            data[data > 0] = 1
+        elif self.tfidf == "count":
+            pass
+        elif self.tfidf == "TF":
+            data = tf_transform(data)
         else:
-            raise ValueError('Invalid preprocess method.')
+            raise ValueError(
+                f"Invalid preprocess method. Expected one of TF/IDF/TF-IDF/binary/count."
+            )
         elapsed_time['tfidf'] = time.time() - start_time
 
         if self.dimension_reduction_method is not None:
             if verbose:
                 print("Dimension reduction.")
             start_time = time.time()
-            _data = self.dimension_reduction_method().transform(prepro_data, **self.dimension_reduction_kw)
+            low_dimensions_data = self.dimension_reduction_method().transform(data, **self.dimension_reduction_kw)
             elapsed_time['dimension_reduction'] = time.time() - start_time
-            if scipy.sparse.issparse(_data):
-                _data = _data.toarray()
-        
+            if scipy.sparse.issparse(low_dimensions_data):
+                low_dimensions_data = low_dimensions_data.toarray()
+        else:
+            low_dimensions_data = data
+
+        del data
+        gc.collect()  
+
         if verbose:
             print("Nearest neighbors.")
         start_time = time.time()
 
         neighbor_indices = self.nearest_neighbors_method().get_neighbors(
-            _data, n_neighbors=n_neighbors, **self.nearest_neighbors_kw
+            low_dimensions_data, n_neighbors=n_neighbors, **self.nearest_neighbors_kw
         )
         elapsed_time['nearest_neighbors'] = time.time() - start_time
         if verbose:
-            print(f"Finished {self}. Elapsed time: {elapsed_time}. Peak memory: {peak_memory}")
+            print(f"Finished {self}. Elapsed time: {elapsed_time}.")
         return neighbor_indices, elapsed_time
 
 

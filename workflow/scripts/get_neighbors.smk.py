@@ -18,7 +18,8 @@ from nearest_neighbors import (
     PAFNearestNeighbors,
     MHAPNearestNeighbors,
     MECAT2NearestNeighbors,
-    wtdbg2NearestNeighbors
+    wtdbg2NearestNeighbors,
+    FEDRANNNearestNeighbors
 )
 from evaluate import NearestNeighborsConfig, compute_nearest_neighbors
 
@@ -38,17 +39,9 @@ parser.add_argument("--n-neighbors", type=int, default=20, required=False)
 parser.add_argument("--threads", type=int, default=64, required=False)
 
 args = parser.parse_args()
-
-if len(args.input) == 3:
-    npz_path = args.input[0]
-    tsv_path = args.input[1]
-    paf_path = args.input[2]
-else:
-    npz_path = args.input[0]
-    tsv_path = args.input[1]
+tsv_path = args.input[0]
 nbr_path = args.output[0]
 time_path = args.output[1]
-
 method = args.method
 
 ## read ANN method parameters file
@@ -71,56 +64,59 @@ if args.dim_parameter:
 else:
     dim_parameter = {}
 
-## process SRP multi-threads and batch process
-if 'mpSRP' in method:
-    dim_parameter.update({'temp_dir':os.path.dirname(npz_path),
-                          'batch_size':100_000,
-                          'n_jobs':3})
-
-print('start loading feature matrix...')
-feature_matrix = sp.sparse.load_npz(npz_path)
-print('feature matrix loading done!')
-
-kw = dict(data=feature_matrix)
-max_bucket_size = COVERAGE_DEPTH * 1.5
 max_n_neighbors = args.n_neighbors
-if 'density_base_auto' in dim_parameter:
-    real_dim_parameter = {'density':(1/math.sqrt(feature_matrix.shape[1]))*int(dim_parameter['density_base_auto'])}
-else:
-    real_dim_parameter = dim_parameter
-
 print(method)
 
-if method in ['minimap2','xRead','BLEND','MHAP','MECAT2','wtdbg2']:
+
+if method in ['minimap2','xRead','BLEND','MHAP','MECAT2','wtdbg2','FEDRANN']:
+    paf_path = args.input[1]
     method_class_dict = {'MHAP':MHAPNearestNeighbors,
                      'MECAT2':MECAT2NearestNeighbors,
-                     'wtdbg2':wtdbg2NearestNeighbors}
+                     'wtdbg2':wtdbg2NearestNeighbors,
+                     'FEDRANN':FEDRANNNearestNeighbors}
     elapsed_time = {}
     start_time = time.time()
     meta_df = pd.read_table(tsv_path).iloc[:MAX_SAMPLE_SIZE, :].reset_index()
     read_indices = {read_name: read_id for read_id, read_name in meta_df['read_name'].items()}
+    n_rows = len(meta_df)
     if method in ['minimap2','BLEND']:
         neighbor_indices = PAFNearestNeighbors().get_neighbors(
-                data=feature_matrix, n_neighbors=max_n_neighbors, paf_path=paf_path, read_indices=read_indices
+                n_rows=n_rows, n_neighbors=max_n_neighbors, paf_path=paf_path, read_indices=read_indices
             )
     elif method == 'xRead':
         neighbor_indices = idPAFNearestNeighbors().get_neighbors(
-                data=feature_matrix, n_neighbors=max_n_neighbors, paf_path=paf_path, read_indices=read_indices
+                n_rows=n_rows, n_neighbors=max_n_neighbors, paf_path=paf_path, read_indices=read_indices
             )
     else:
         neighbor_indices = method_class_dict[method]().get_neighbors(
-                data=feature_matrix, n_neighbors=max_n_neighbors, paf_path=paf_path, read_indices=read_indices
+                n_rows=n_rows, n_neighbors=max_n_neighbors, paf_path=paf_path, read_indices=read_indices
             )
     elapsed_time['nearest_neighbors'] = time.time() - start_time
-elif 'Exact' in method and 'chr1_248M' in tsv_path:
-    print('For saving time, extract 1w reads as query reads.')
-    config = parse_string_to_config(method,{'sample_query_number':10000},{})
-    neighbor_indices, elapsed_time, peak_memory = compute_nearest_neighbors(
-        data=feature_matrix,
-        config=config,
-        n_neighbors=max_n_neighbors,
-    )
+# elif 'Exact' in method and 'chr1_248M' in tsv_path:
+#     print('For saving time, extract 1w reads as query reads.')
+#     config = parse_string_to_config(method,{'sample_query_number':10000},{})
+#     neighbor_indices, elapsed_time, peak_memory = compute_nearest_neighbors(
+#         data=feature_matrix,
+#         config=config,
+#         n_neighbors=max_n_neighbors,
+#     )
 else:
+    npz_path = args.input[1]
+        ## process SRP multi-threads and batch process
+    if 'mpSRP' in method:
+        dim_parameter.update({'threads':10})
+
+    print('start loading feature matrix...')
+    feature_matrix = sp.sparse.load_npz(npz_path)
+    print('feature matrix loading done!')
+
+    kw = dict(data=feature_matrix)
+    max_bucket_size = COVERAGE_DEPTH * 1.5
+    
+    if 'density_base_auto' in dim_parameter:
+        real_dim_parameter = {'density':(1/math.sqrt(feature_matrix.shape[1]))*int(dim_parameter['density_base_auto'])}
+    else:
+        real_dim_parameter = dim_parameter
     config = parse_string_to_config(method,ANN_parameter,real_dim_parameter)
     neighbor_indices, elapsed_time = compute_nearest_neighbors(
         data=feature_matrix,

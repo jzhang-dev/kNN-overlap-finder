@@ -1,6 +1,6 @@
 from evaluate import NearestNeighborsConfig
 from dim_reduction import SpectralEmbedding, scBiMapEmbedding,GaussianRandomProjection,SparseRP,SimHash_Dimredu,PCA,isomap,umapEmbedding,mp_SparseRandomProjection
-from nearest_neighbors import ExactNearestNeighbors,PAFNearestNeighbors,SimHash,HNSW,ProductQuantization,NNDescent,WeightedLowHash,IVFProductQuantization
+from nearest_neighbors import ExactNearestNeighbors,SimHash,HNSW,ProductQuantization,NNDescent,IVFProductQuantization
 max_bucket_size = 20
 def parse_string_to_config(input_string: str,
                            nearest_neighbors_parameter: dict = {}, 
@@ -12,7 +12,6 @@ def parse_string_to_config(input_string: str,
     'HNSW':HNSW,
     'PQ':ProductQuantization,
     'NNDescent':NNDescent,
-    'MinHash':WeightedLowHash,
     'IVFPQ':IVFProductQuantization,
     'Euclidean':'euclidean',
     'Cosine':'cosine',

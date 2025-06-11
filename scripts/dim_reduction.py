@@ -19,36 +19,10 @@ from typing import Union
 import gc
 from joblib import Parallel, delayed
 import os
+from sklearn.utils.extmath import safe_sparse_dot
+import sharedmem
+import math
 
-def split_sparse_matrix_by_rows(sparse_matrix: csr_matrix, num_splits: int = 10):
-    """
-    将稀疏矩阵按行分成指定份数。
-    
-    参数:
-        sparse_matrix: scipy.sparse.csr_matrix 或其他稀疏矩阵格式
-        num_splits: 分割成的份数，默认为10
-    返回:
-        splits: 包含分割后的稀疏矩阵的列表
-    """
-    total_rows = sparse_matrix.shape[0]
-
-    rows_per_split = total_rows // num_splits
-    remainder = total_rows % num_splits
-    
-    splits = []
-    
-    start_idx = 0
-    
-    for i in range(num_splits):
-        if i < remainder:
-            end_idx = start_idx + rows_per_split + 1
-        else:
-            end_idx = start_idx + rows_per_split
-        split_matrix = sparse_matrix[start_idx:end_idx, :]
-        splits.append(split_matrix)
-        start_idx = end_idx
-    
-    return splits
 
 class _SpectralMatrixFree:
     """
@@ -156,35 +130,78 @@ class GaussianRandomProjection(_DimensionReduction):
         return embedding
 
 
-class Split_GRP(_DimensionReduction):
-    @profile
-    def transform(
-        self, data: csr_matrix | NDArray, 
-        n_dimensions: int,
-        n_split: int = 20, 
-        processes: int = 1):
-
-        splits = split_sparse_matrix_by_rows(data,n_split)
-        reduced_part_fm = collections.defaultdict()
-        
-        with sharedmem.MapReduce(np=processes) as pool:
-
-            def work(i):
-                part_fm = splits[i]
-                print(f'processing part{i}, shape: {part_fm.shape}')
-                reducer = random_projection.GaussianRandomProjection(n_components=n_dimensions)
-                part_embedding = reducer.fit_transform(part_fm)
-                return i, part_embedding
-
-            def reduce(i, part_embedding):
-                reduced_part_fm[i] = part_embedding
-
-            pool.map(work, range(n_split), reduce=reduce)
-
-        embedding = np.vstack([reduced_part_fm[i] for i in range(n_split)])
-        return embedding
 
 class mp_SparseRandomProjection:
+    def _make_random_matrix(
+        self, n_components, n_features, density: float, seed: int = 2094
+    ):
+        rng = np.random.default_rng(seed)
+        indices = []
+        offset = 0
+        indptr = [offset]
+        for _ in range(n_components):
+            # find the indices of the non-zero components for row i
+            n_nonzero_i = rng.binomial(n_features, density)
+            indices_i = rng.choice(n_features, n_nonzero_i, replace=False)
+            indices.append(indices_i)
+            offset += n_nonzero_i
+            indptr.append(offset)
+
+        indices = np.concatenate(indices)
+
+        # Among non zero components the probability of the sign is 50%/50%
+        data = rng.binomial(1, 0.5, size=np.size(indices)) * 2 - 1
+
+        # build the CSR structure by concatenating the rows
+        components = csr_matrix(
+            (data, indices, indptr), shape=(n_components, n_features), dtype=np.float32
+        )
+        return np.sqrt(1 / density) / np.sqrt(n_components) * components
+
+    def transform(
+        self,
+        data: csr_matrix | NDArray,
+        n_dimensions: int,
+        density: float | str = "auto",
+        batch_size: int = 10000,
+        seed: int = 521022,
+        threads: int = 1,
+    ) -> NDArray:
+        assert data.shape is not None
+        if density == "auto":
+            _density = 1 / math.sqrt(data.shape[1])
+        else:
+            assert isinstance(density, float) and 0 < density <= 1
+            _density = density
+
+        if isspmatrix_coo(data):
+            data = data.tocsr()  
+            
+        random_matrix = self._make_random_matrix(
+            n_components=n_dimensions,
+            n_features=data.shape[1],
+            density=_density,
+            seed=seed,
+        )
+
+        with sharedmem.MapReduce(np=threads) as pool:
+            embeddings = sharedmem.empty(
+                (data.shape[0], n_dimensions), dtype=random_matrix.dtype
+            )
+            def work(i0):
+                batch_data = data[i0 : i0 + batch_size]
+                batch_embeddings = safe_sparse_dot(batch_data, random_matrix.T, dense_output=True)
+                embeddings[i0 : i0 + batch_size] = batch_embeddings
+
+                return i0
+
+            pool.map(work, range(0, data.shape[0], batch_size))
+
+        assert isinstance(embeddings, np.ndarray)
+        return embeddings
+
+
+class mp_SparseRandomProjection_former:
     def _fit_transformer(self,
                          n_features: int,
                          n_dimensions,
@@ -200,6 +217,7 @@ class mp_SparseRandomProjection:
         # 用虚拟数据拟合（避免加载全矩阵）
         dummy_data = csr_matrix((1, n_features))
         self.transformer_.fit(dummy_data)
+
 
     def _process_batch(self, temp_dir, batch_idx: int, batch_data: csr_matrix) -> str:
         # 降维计算
@@ -249,7 +267,63 @@ class mp_SparseRandomProjection:
         for path in batch_paths:
             os.remove(path)
         return result
+def split_sparse_matrix_by_rows(sparse_matrix: csr_matrix, num_splits: int = 10):
+    """
+    将稀疏矩阵按行分成指定份数。
+    
+    参数:
+        sparse_matrix: scipy.sparse.csr_matrix 或其他稀疏矩阵格式
+        num_splits: 分割成的份数，默认为10
+    返回:
+        splits: 包含分割后的稀疏矩阵的列表
+    """
+    total_rows = sparse_matrix.shape[0]
 
+    rows_per_split = total_rows // num_splits
+    remainder = total_rows % num_splits
+    
+    splits = []
+    
+    start_idx = 0
+    
+    for i in range(num_splits):
+        if i < remainder:
+            end_idx = start_idx + rows_per_split + 1
+        else:
+            end_idx = start_idx + rows_per_split
+        split_matrix = sparse_matrix[start_idx:end_idx, :]
+        splits.append(split_matrix)
+        start_idx = end_idx
+    
+    return splits
+
+class Split_GRP(_DimensionReduction):
+    @profile
+    def transform(
+        self, data: csr_matrix | NDArray, 
+        n_dimensions: int,
+        n_split: int = 20, 
+        processes: int = 1):
+
+        splits = split_sparse_matrix_by_rows(data,n_split)
+        reduced_part_fm = collections.defaultdict()
+        
+        with sharedmem.MapReduce(np=processes) as pool:
+
+            def work(i):
+                part_fm = splits[i]
+                print(f'processing part{i}, shape: {part_fm.shape}')
+                reducer = random_projection.GaussianRandomProjection(n_components=n_dimensions)
+                part_embedding = reducer.fit_transform(part_fm)
+                return i, part_embedding
+
+            def reduce(i, part_embedding):
+                reduced_part_fm[i] = part_embedding
+
+            pool.map(work, range(n_split), reduce=reduce)
+
+        embedding = np.vstack([reduced_part_fm[i] for i in range(n_split)])
+        return embedding
 
 class SparseRP(_DimensionReduction):
     def transform(

@@ -1,7 +1,5 @@
 import sys,pickle
-import networkx as nx
 import pandas as pd
-import matplotlib.pyplot as plt
 
 sys.path.append("scripts")
 sys.path.append("../../scripts")
@@ -12,7 +10,7 @@ tsv_path = snakemake.input['metadata']
 ref_graph_path = snakemake.output['ref_graph']
 
 meta_df = pd.read_table(tsv_path)
-
+print(meta_df)
 
 def get_read_intervals(meta_df):
     read_intervals = {
@@ -28,7 +26,9 @@ def get_read_intervals(meta_df):
     return read_intervals
 
 read_intervals = get_read_intervals(meta_df)
-
+print('read_intervals generation done!')
 reference_graph = OverlapGraph.from_intervals(read_intervals) 
+print('reference_graph generation done')
+print('start writing in file')
 with open(ref_graph_path, "wb") as f:
     pickle.dump(reference_graph, f)

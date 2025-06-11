@@ -29,9 +29,9 @@ elif 'minimizer' in filename:
 str1 = re.search(p1,filename).group(1)
 str2 = re.search(p1,filename).group(2)
 str3 = re.search(p1,filename).group(3)
-tsv_path = str1+'feature_matrix/'+str2+str3+'metadata.tsv.gz'
+tsv_path = str1+'regional_reads/'+str2+'metadata.tsv.gz'
 ref_graph_path = str1+'regional_reads/'+str2+'reference_graph.gpickle'
-df_file= nbr_path[:-14]+'integral_stat.tsv'
+df_file= nbr_path[:-14]+'full_stat.tsv'
 
 pattern  = r'data/([^/]+)/([^/]+)/([^/]+)/([^/]+)/([^/]+)/(.+)_nbr_matrix'
 thread = re.search(pattern,filename).group(1)
@@ -49,7 +49,16 @@ nbr_indices = data['arr_0']
 with open(ref_graph_path,'rb') as f:
     reference_graph = pickle.load(f)
 print("reference graph loading done")
-
+ref_edges_num = reference_graph.number_of_edges()
+reference_edges = set(
+    tuple(sorted((node_1, node_2)))
+    for node_1, node_2 in reference_graph.edges
+)
+filter_reference_edges = set(
+    tuple(sorted((node_1, node_2)))
+    for node_1, node_2, data in reference_graph.edges(data=True)
+    if data['overlap_size'] >= 500
+)
 
 max_n_neighbors=20
 df_rows = []
@@ -59,7 +68,11 @@ k_values = np.arange(1, max_n_neighbors)
 neighbor_edges_nums = []
 precisions = []
 mean_overlap_sizes = []
-
+filter_recall = []
+recall = []
+singleton = []
+singleton_percentage = []
+connected_component = []
 
 for k in k_values:
     graph = OverlapGraph.from_neighbor_indices(
@@ -68,11 +81,25 @@ for k in k_values:
     read_ids=read_ids,
     require_mutual_neighbors=False)
     print(f"neighbor{k} graph construct done!")
+
     neighbor_edges_nums.append(len(graph.edges())/nbr_indices.shape[0])
     overlap_sizes = get_neighbor_overlap_bases(query_graph=graph, reference_graph=reference_graph)
     mean_overlap_sizes.append(sum(overlap_sizes)/len(overlap_sizes))
     precisions.append(1-(overlap_sizes.count(0)/len(overlap_sizes)))
-    print(1-(overlap_sizes.count(0)/len(overlap_sizes)))
+    print(precisions)
+    query_edges = set(
+        tuple(sorted((read_1, read_2))) for read_1, read_2 in graph.edges
+    )
+    true_positive_edges = query_edges & reference_edges
+    filter_true_positive_edges = query_edges & filter_reference_edges
+    recall.append(len(true_positive_edges)/len(reference_edges))
+    filter_recall.append(len(filter_true_positive_edges)/len(filter_reference_edges))
+
+    remove_false_edges(graph, reference_graph)
+    singleton.append(len([node for node in graph if len(graph[node]) <= 1]))
+    singleton_percentage.append(len([node for node in graph if len(graph[node]) <= 1])/reference_graph.number_of_nodes()) 
+    connected_component.append(nx.number_connected_components(graph))
+
 
 di = {
     'thread':thread,
@@ -83,8 +110,13 @@ di = {
     'method':method,
     'n_neighbors':range(1,max_n_neighbors),
     'edges_num':neighbor_edges_nums,
-    'integral_precision':precisions,
-    'integral_mean':mean_overlap_sizes
+    'precision':precisions,
+    'overlap_size':mean_overlap_sizes,
+    'recall':recall,
+    'filter_recall':filter_recall,
+    'singleton':singleton,
+    'singleton_percentage':singleton_percentage,
+    'connected_component':connected_component
     }
 df = pd.DataFrame(di)
 df.to_csv(df_file,sep='\t',index=False)

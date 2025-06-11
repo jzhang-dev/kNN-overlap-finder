@@ -18,6 +18,7 @@ from functools import partial
 from accelerate import open_gzipped
 from fasta_load import FastaLoader
 import gc,time
+from array import array
 
 def init_reverse_complement():
     TRANSLATION_TABLE = str.maketrans("ACTGactg", "TGACtgac")
@@ -56,6 +57,7 @@ def load_reads(fasta_path: str):
 
     return read_names, read_orientations, read_sequences
 
+
 def process_sequence(args, k, seed, all_kmer_number, max_hash):
     row_idx, seq = args
     seq_counts = collections.defaultdict(int)
@@ -68,13 +70,10 @@ def process_sequence(args, k, seed, all_kmer_number, max_hash):
     if row_idx % 200_000 == 0:
         print(row_idx)
 
-    count = len(seq_counts)
-    if count == 0:
-        return np.empty((0, 3), dtype=np.uint64)
-    result = np.empty((count, 3), dtype=np.uint64)
-    for i, (hashed, cnt) in enumerate(seq_counts.items()):
-        result[i] = [row_idx, hashed, cnt]
-    return result
+    all_hash_value_array = array('Q',list(seq_counts.keys()))   # 键数组
+    all_kmer_count_array = array('H',list(seq_counts.values()))
+    all_row_idx_array = array('I',[row_idx]*len(seq_counts))
+    return all_row_idx_array,all_hash_value_array,all_kmer_count_array 
 
 def build_sparse_matrix_multiprocess(read_sequences, k, seed, sample_fraction, min_multiplicity, n_processes):
     all_kmer_number = 2**64
@@ -88,12 +87,12 @@ def build_sparse_matrix_multiprocess(read_sequences, k, seed, sample_fraction, m
                       max_hash=max_hash)
         
         # Process results incrementally
-        row_ind, col_ind, data = [], [], []
-        for result in pool.imap(func, enumerate(read_sequences), chunksize=1000):
-            if result.size > 0:
-                row_ind.append(result[:, 0])
-                col_ind.append(result[:, 1])
-                data.append(result[:, 2])
+        row_ind, col_ind, data = array('I',[]), array('Q',[]), array('H',[])
+        for result in pool.imap(func, enumerate(read_sequences), chunksize=10000):
+            if len(result) > 0:
+                row_ind.extend(result[0])
+                col_ind.extend(result[1])
+                data.extend(result[2])
         pool.close()
         pool.join()
         gc.collect()
@@ -101,14 +100,12 @@ def build_sparse_matrix_multiprocess(read_sequences, k, seed, sample_fraction, m
     time2 = time.time()
     print(f'stage1(process reads) elapsed time: {time2-time1}')
         # Concatenate all results
-    row_ind = np.concatenate(row_ind)
-    col_ind = np.concatenate(col_ind)
-    data = np.concatenate(data)
     time3 = time.time()
     print(f'stage2(concat all ind) elapsed time: {time3-time2}')
 
     # Build sparse matrix
-    re_col_ind = pd.factorize(col_ind)[0].tolist()
+    col_ind_map = {d:i for i,d in enumerate(set(col_ind))}
+    re_col_ind =[col_ind_map[d] for d in col_ind]
     n_rows = len(read_sequences)
     n_cols = max(re_col_ind) + 1
     time4 = time.time()

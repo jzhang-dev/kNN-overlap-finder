@@ -6,12 +6,16 @@ from typing import Type, Sequence, Mapping, Any, Collection, MutableMapping
 from dataclasses import dataclass
 import numpy as np
 from numpy import ndarray
-import networkx as nx
 from intervaltree import Interval, IntervalTree
+import pickle
 
 from data_io import get_sibling_id, get_fwd_id, parse_paf_file
 from align import _PairwiseAligner, run_multiprocess_alignment, AlignmentResult
-
+import sharedmem
+from collections import defaultdict
+import networkx as nx
+# from bx.intervals.intersection import Intersecter
+# from tqdm import tqdm
 
 @dataclass
 class GenomicInterval:
@@ -30,6 +34,13 @@ def get_interval_trees(
             tree.addi(intv.start, intv.end, read)
     return tree_dict
 
+# def get_interval_trees_bx(
+#         read_intervals: Mapping[int, Collection[GenomicInterval]]):
+#     tree_dict = defaultdict(Intersecter)
+#     for read, intervals in read_intervals.items():
+#         for intv in intervals:
+#             tree_dict[intv.chromosome].add_interval(intv.start, intv.end, read)
+#     return tree_dict
 
 def get_overlap_candidates(
     neighbor_indices: ndarray,
@@ -120,43 +131,141 @@ class OverlapGraph(nx.Graph):
                     continue
                 graph.add_edge(node, nbr_node, alignment_score=score)
         return graph
+    
+    # def from_intervals(cls, read_intervals: Mapping[int, Collection[GenomicInterval]], num_processes: int = 32):
+    #     # 1. 改用 bx.intervals.Intersecter 构建索引
+    #     trees = get_interval_trees_bx(read_intervals=read_intervals)
+    #     graph = cls()
+        
+    #     # 2. 并行计算
+    #     with sharedmem.MapReduce(np=num_processes) as pool:
+    #         def process_read(read_0):
+    #             local_edges = []
+    #             parent_reads = set()
+    #             seen_pairs = set()
+                
+    #             for intv in read_intervals[read_0]:
+    #                 tree = trees[intv.chromosome]
+    #                 start_0, end_0 = intv.start, intv.end
+                    
+    #                 # bx.intervals 查询方式
+    #                 for read_1, start_1, end_1 in tree.find(start_0, end_0):
+    #                     if read_1 == read_0 or (read_0, read_1) in seen_pairs:
+    #                         continue
+    #                     seen_pairs.add((read_0, read_1))
+                        
+    #                     if start_1 <= start_0 and end_1 >= end_0:
+    #                         parent_reads.add(read_1)
+    #                         continue
+                        
+    #                     overlap_size = max(0, min(end_0, end_1) - max(start_0, start_1))
+    #                     local_edges.append((read_0, read_1, overlap_size))
+                
+    #             return local_edges, (read_0, len(parent_reads) == 1)
+
+    #         with tqdm(total=len(read_intervals)) as pbar:
+    #             results = pool.map(process_read, read_intervals.keys())
+        
+    #     # 3. 合并结果
+    #     contained_reads = set()
+    #     for edges, (read_0, is_contained) in results:
+    #         for u, v, overlap_size in edges:
+    #             if not graph.has_edge(u, v):
+    #                 graph.add_edge(u, v, overlap_size=overlap_size)
+    #         if is_contained:
+    #             contained_reads.add(read_0)
+        
+    #     nx.set_node_attributes(graph, "contained", False)
+    #     for read in contained_reads:
+    #         graph.nodes[read]["contained"] = True
+        
+    #     return graph
 
     @classmethod
-    def from_intervals(cls, read_intervals: Mapping[int, Collection[GenomicInterval]]):
-        # Find all overlaps
+    def from_intervals(cls, read_intervals: Mapping[int, Collection[GenomicInterval]], num_processes: int = 30):
+        # 1. 构建 Interval Trees（单线程）
         trees = get_interval_trees(read_intervals=read_intervals)
         graph = cls()
-        contained_reads = set()
-        for read_0, intervals in read_intervals.items():
-            parent_reads = set()
-            for intv in intervals:
-                tree = trees[intv.chromosome]
-                start_0 = intv.start
-                end_0 = intv.end
-                for intv_1 in tree.overlap(start_0, end_0):
-                    read_1 = intv_1.data
-                    if read_1 == read_0:
-                        continue
-                    start_1, end_1 = intv_1.begin, intv_1.end
-                    if start_1 < start_0 and end_1 > end_0:
-                        parent_reads.add(read_1)
-                    if graph.has_edge(read_0, read_1):
-                        continue
-                    overlap_size = max(0, min(end_0, end_1) - max(start_0, start_1))
-                    graph.add_edge(
-                        read_0,
-                        read_1,
-                        overlap_size=overlap_size
-                    )
-            if len(parent_reads) == 1:
-                contained_reads.add(read_0)
+        
+        # 2. 使用 sharedmem 并行处理重叠计算
+        with sharedmem.MapReduce(np=num_processes) as pool:
+            # 2.1 定义每个进程的任务
+            def process_read(read_0):
+                if read_0 % 10000 == 0:
+                    print(read_0/len(read_intervals))
+                local_edges = []
+
+                for intv in read_intervals[read_0]:
+                    tree = trees[intv.chromosome]
+                    start_0, end_0 = intv.start, intv.end
+                    
+                    for intv_1 in tree.overlap(start_0, end_0):
+                        read_1 = intv_1.data
+                        if read_1 == read_0:
+                            continue
+                        
+                        start_1, end_1 = intv_1.begin, intv_1.end
+                    
+                        overlap_size = max(0, min(end_0, end_1) - max(start_0, start_1))
+                        local_edges.append((read_0, read_1, overlap_size))
+                
+                # 返回该 read 的所有边和是否被包含
+                return local_edges
+
+            # 2.2 并行执行
+            results = pool.map(process_read, read_intervals.keys())
+        print('sharedmem done')
+        
+        with open('/home/miaocj/docker_dir/kNN-overlap-finder/data/ont_ref_graph_out.pkl','wb') as f:
+            pickle.dump(results,f)
+        print("pickle saved")
+        # 3. 合并结果
+        for edges in results:
+            for u, v, overlap_size in edges:
+                if not graph.has_edge(u, v):
+                    graph.add_edge(u, v, overlap_size=overlap_size)
+
+        print('generation graph done!')
+        return graph
+    # @classmethod
+    # def from_intervals(cls, read_intervals: Mapping[int, Collection[GenomicInterval]]):
+    #     # Find all overlaps
+    #     trees = get_interval_trees(read_intervals=read_intervals)
+    #     graph = cls()
+    #     contained_reads = set()
+    #     i=0
+    #     for read_0, intervals in read_intervals.items():
+    #         i+=1
+    #         print(i)
+    #         parent_reads = set()
+    #         for intv in intervals:
+    #             tree = trees[intv.chromosome]
+    #             start_0 = intv.start
+    #             end_0 = intv.end
+    #             for intv_1 in tree.overlap(start_0, end_0):
+    #                 read_1 = intv_1.data
+    #                 if read_1 == read_0:
+    #                     continue
+    #                 start_1, end_1 = intv_1.begin, intv_1.end
+    #                 if start_1 < start_0 and end_1 > end_0:
+    #                     parent_reads.add(read_1)
+    #                 if graph.has_edge(read_0, read_1):
+    #                     continue
+    #                 overlap_size = max(0, min(end_0, end_1) - max(start_0, start_1))
+    #                 graph.add_edge(
+    #                     read_0,
+    #                     read_1,
+    #                     overlap_size=overlap_size
+    #                 )
+    #         if len(parent_reads) == 1:
+    #             contained_reads.add(read_0)
 
         # Label contained reads
-        nx.set_node_attributes(graph, "contained", False)
-        for read in contained_reads:
-            graph.nodes[read]["contained"] = True
+        # nx.set_node_attributes(graph, "contained", False)
+        # for read in contained_reads:
+        #     graph.nodes[read]["contained"] = True
 
-        return graph
+        # return graph
 
     def align_edges(
         self,

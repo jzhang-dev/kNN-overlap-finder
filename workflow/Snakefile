@@ -73,6 +73,29 @@ rule map_real_reads_to_genome:
         minimap2 -x map-ont {input.reference} {input.reads} --secondary=no --MD --eqx -I 10G -k 19 -w 5 -A 3 -B 2 -m 250 -t 60 > {output.all_paf}
         """
 
+# rule filter_all_paf_loose:
+#     input:
+#         all_paf="data/real_reads/{sample}/{platform}/all_aligned.paf",
+#     output:
+#         mid_paf="data/real_reads/{sample}/{platform}/middle_aligned.paf",
+#         filter_paf="data/real_reads/{sample}/{platform}/loose_filter_aligned.paf",
+#     shell:
+#         """
+#         awk '($2 >= 5000) && ($12 >= 30)' {input.all_paf}> {output.mid_paf}
+#         python workflow/scripts/save_max_match_base_for_paf.py {output.mid_paf} {output.filter_paf}
+#         """
+
+# rule extrace_fasta_from_paf_all_loose:
+#     input:
+#         filter_paf="data/real_reads/{sample}/{platform}/loose_filter_aligned.paf",
+#         reads="data/real_reads/{sample}/{platform}/all_reads.fq.gz",
+#     output:
+#         filter_reads="data/regional_reads/{sample}/all/loose_filter_{platform}/reads.fasta.gz",
+#     shell:
+#         """
+#         cut -f1 {input.filter_paf} |sort  |uniq | seqkit grep -f - {input.reads} | seqkit fq2fa - | gzip > {output.filter_reads}
+#         """
+
 rule filter_all_paf:
     input:
         all_paf="data/real_reads/{sample}/{platform}/all_aligned.paf",
@@ -81,7 +104,7 @@ rule filter_all_paf:
         filter_paf="data/real_reads/{sample}/{platform}/filter_aligned.paf",
     shell:
         """
-        awk '($2 > 5000) && ($10/$2 > 0.5) && ($12 > 30)' {input.all_paf}> {output.mid_paf}
+        awk '($2 >= 5000) && ($10/$2 >= 0.5) && ($12 >= 30)' {input.all_paf}> {output.mid_paf}
         python workflow/scripts/save_max_match_base_for_paf.py {output.mid_paf} {output.filter_paf}
         """
 
@@ -108,7 +131,7 @@ rule extrace_fasta_from_paf_regional:
         start=lambda wildcards: REGIONS[wildcards["sample"]][wildcards["region"]][1],
         end=lambda wildcards: REGIONS[wildcards["sample"]][wildcards["region"]][2],
     wildcard_constraints:
-        region=r"^a+.+",
+        region=r'(HLA|IGK|chr22_51M|chr1_248M)'
     conda: "envs/default.yaml"
     shell:
         """
@@ -132,7 +155,7 @@ rule get_metadata:
     output:
         metadata="data/regional_reads/{sample}/{region}/filter3_{platform}/metadata.tsv.gz",
     wildcard_constraints:
-        sample=r'(CHM13|rice|ara)'
+        sample=r'(CHM13|rice|ara|droso|caenor)'
     conda:
         "envs/default.yaml"
     shell:
@@ -198,8 +221,8 @@ rule generate_reference_graph:
     output:
         ref_graph="data/regional_reads/{sample}/{region}/{platform}/reference_graph.gpickle",
     wildcard_constraints:
-        region=r"^a+.+",  # 排除"all"
-        sample=r'(CHM13|rice|ara)'
+        region=r'(HLA|IGK|chr22_51M|chr1_248M)',  # 排除"all"
+        sample=r'(CHM13|rice|ara|caenor|droso)'
     conda:
         "envs/default.yaml"
     script:
@@ -210,6 +233,7 @@ rule generate_reference_graph_for_chrs:
         metadata="data/regional_reads/{sample}/all/{platform}/metadata.tsv.gz",
     output:
         ref_graph="data/regional_reads/{sample}/all/{platform}/reference_graph.gpickle",
+    threads: 1
     conda:
         "envs/default.yaml"
     script:
@@ -221,8 +245,8 @@ rule run_minimap2_ava:
     input:
         fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
     output:
-        paf_minimap2="data/minimap2/{sample}/{region}/{platform}/kmer_k21/alignment.paf",
-        minimap2_log="data/minimap2/{sample}/{region}/{platform}/kmer_k21/minimap2_time.log",
+        paf_minimap2="data/minimap2/{sample}/{region}/{platform}/hash_k21/alignment.paf",
+        minimap2_log="data/evaluation64/{sample}/{region}/{platform}/hash_k21/minimap2_time.log",
     params:
         preset="ava-ont",
     conda:
@@ -260,23 +284,24 @@ rule run_daligner:
         | gzip -c > {output.maf}
         """
 
+## specific parameters refer canu
 rule run_mhap:
     input:
         fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
     output:
-        txt=temp("data/MHAP/{sample}/{region}/{platform}/kmer_k21/alignment.txt"),
-        txt_gz="data/MHAP/{sample}/{region}/{platform}/kmer_k21/alignment.txt.gz",
-        log="data/MHAP/{sample}/{region}/{platform}/kmer_k21/MHAP_time.log",
+        txt=temp("data/MHAP/{sample}/{region}/{platform}/hash_k21/alignment.txt"),
+        txt_gz="data/MHAP/{sample}/{region}/{platform}/hash_k21/alignment.txt.gz",
+        log="data/evaluation64/{sample}/{region}/{platform}/hash_k21/MHAP_time.log",
     threads:64
     shell:
         """
         /usr/bin/time -v -o {output.log} \
-        java -server  -Xms128g -jar ~/docker_dir/biosoft/mhap-2.1.1.jar \
+        java  -Xms500g -XX:ParallelGCThreads={threads} -server -jar ~/docker_dir/biosoft/mhap-2.1.1.jar \
         -s {input.fasta}\
         --repeat-weight 0.9 --repeat-idf-scale 10 -k 16 \
         --store-full-id \
         --num-hashes 768 \
-        --num-min-matches 2 \
+        --num-min-matches 20 \
         --threshold 0.73 \
         --filter-threshold 0.0000001 \
         --ordered-sketch-size 1536 \
@@ -291,24 +316,29 @@ rule run_xread:
     input:
         fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
     output:
-        paf="data/xRead/{sample}/{region}/{platform}/kmer_k21/alignment.paf",
-        log="data/xRead/{sample}/{region}/{platform}/kmer_k21/xRead_time.log",
+        paf="data/xRead/{sample}/{region}/{platform}/hash_k21/alignment.paf",
+        log="data/evaluation64/{sample}/{region}/{platform}/hash_k21/xRead_time.log",
     threads:64
+    params:
+        xread_params=lambda wildcards: 
+        "-k 19 -w 40 -p 2 " if wildcards.platform == "filter3_real_pb" 
+        else "-k 15 -w 5 -p 1", 
     shell:
         """
         /usr/bin/time -v -o {output.log} \
-        ~/docker_dir/biosoft/xRead-v1.0.0/xRead {input.fasta} -k 19 -w 40 -p 2 -b 30 -m 30 -n 20 -t {threads} -M {threads} \
+        ~/docker_dir/biosoft/xRead-v1.0.0/xRead {input.fasta} {params.xread_params} -b 30 -m 30 -n 20 -x 5.0 -t {threads} -M {threads} \
         > {output.paf}
         """
+        ### -x 5.0 suitable for low depth data, -b -m -n set loose filter standard
 
 rule run_mecat2:
     input:
         fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
     output:
-        wd=directory("data/MECAT2/{sample}/{region}/{platform}/kmer_k21"),
-        txt=temp("data/MECAT2/{sample}/{region}/{platform}/kmer_k21/alignment.txt"),
-        txt_gz="data/MECAT2/{sample}/{region}/{platform}/kmer_k21/alignment.txt.gz",
-        log="data/MECAT2/{sample}/{region}/{platform}/kmer_k21/MECAT2_time.log",
+        wd=directory("data/MECAT2/{sample}/{region}/{platform}/hash_k21"),
+        txt=temp("data/MECAT2/{sample}/{region}/{platform}/hash_k21/alignment.txt"),
+        txt_gz="data/MECAT2/{sample}/{region}/{platform}/hash_k21/alignment.txt.gz",
+        log="data/evaluation64/{sample}/{region}/{platform}/hash_k21/MECAT2_time.log",
     threads:64
     shell:
         """
@@ -324,43 +354,128 @@ rule run_blend:
     input:
         fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
     output:
-        paf="data/BLEND/{sample}/{region}/{platform}/kmer_k21/alignment.paf",
-        log="data/BLEND/{sample}/{region}/{platform}/kmer_k21/BLEND_time.log",
+        paf="data/BLEND/{sample}/{region}/{platform}/hash_k21/alignment.paf",
+        log="data/evaluation64/{sample}/{region}/{platform}/hash_k21/BLEND_time.log",
     conda:
         "envs/blend.yaml"
+    params:
+        blend_params=lambda wildcards: 
+        "ava-hifi" if wildcards.platform == "filter3_real_pb" 
+        else "ava-ont", 
     threads: 64
     shell:
         """
         /usr/bin/time -v -o {output.log} \
-        blend -x ava-ont {input.fasta} {input.fasta} -t {threads} > {output.paf}
+        blend -x {params.blend_params} {input.fasta} {input.fasta} -t {threads} > {output.paf}
         """
 
 rule run_wtdbg2:
     input:
         fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
     output:
-        paf="data/wtdbg2/{sample}/{region}/{platform}/kmer_k21/alignment.txt.gz",
-        log="data/wtdbg2/{sample}/{region}/{platform}/kmer_k21/wtdbg2_time.log",
+        paf="data/wtdbg2/{sample}/{region}/{platform}/hash_k21/alignment.txt.gz",
+        log="data/evaluation64/{sample}/{region}/{platform}/hash_k21/wtdbg2_time.log",
     params:
-        prefix = "data/wtdbg2/{sample}/{region}/{platform}/kmer_k21/tmp",
-    threads: 8
+        prefix = "data/wtdbg2/{sample}/{region}/{platform}/hash_k21/tmp",
+        wtdbg2_params=lambda wildcards: 
+        "-p 21 -k 0 -AS 4 -K 0.05 -s 0.5 -L 1000" if wildcards.platform == "filter3_real_pb" 
+        else "-p 0 -k 15 -AS 2 -s 0.05", 
+    threads: 64
     shell:
         """
         /usr/bin/time -v -o {output.log} \
-        ~/docker_dir/biosoft/wtdbg2-2.5/wtdbg2 -p 21 -k 0 -AS 4 -K 0.05 -s 0.5 -t {threads} \
+        ~/docker_dir/biosoft/wtdbg2-2.5/wtdbg2 {params.wtdbg2_params} -t {threads} \
         -i {input.fasta} -o {params.prefix}
         mv {params.prefix}.alignments.gz  {output.paf}
         """
 
-rule filter_paf:
+rule run_SeqNeighbor:
     input:
-        paf="data/{biosoft}/{sample}/{region}/{platform}/kmer_k21/alignment.paf",
+        fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
     output:
-        filter_paf="data/{biosoft}/{sample}/{region}/{platform}/kmer_k21/filter_alignment.paf.gz",
+        folder=directory("data/FEDRANN/{sample}/{region}/{platform}/k21_s{kmer_sample}_d{embedding_dimension}/"),
+        log="data/FEDRANN/{sample}/{region}/{platform}/k21_s{kmer_sample}_d{embedding_dimension}/FEDRANN_time.log",
+    threads: 64
+    params:
+        image="seqneighbor:0.4.14.0",
+        kmer_size=21,
+        kmer_sample_fraction=lambda wildcards: 1/int(wildcards["kmer_sample"]),
+        nndescent_n_trees=600,
     shell:
         """
-        awk '$10 > 150 && ($10/$11) > 0.3' {input.paf} | gzip > {output.filter_paf}
+        /usr/bin/time -v -o {output.log} \
+        docker run \
+            --rm \
+            --name seqneighbor-$$ \
+            -v /home/miaocj:/home/miaocj \
+            -v "$(pwd)":/workdir -w /workdir \
+            -e TZ=Asia/Shanghai \
+            -e NUMBA_CACHE_DIR=/tmp/numba_cache \
+            --user $(id -u):$(id -g) \
+            --memory 800g \
+            --shm-size 100g \
+            {params.image} \
+                -i {input.fasta} \
+                -o {output.folder} \
+                -k {params.kmer_size} \
+                --kmer-sample-fraction {params.kmer_sample_fraction} \
+                --seed 602 \
+                --kmer-min-multiplicity 2 \
+                --dimension-reduction mpsrp \
+                --embedding-dimension {wildcards.embedding_dimension} \
+                --nndescent-n-trees {params.nndescent_n_trees} \
+                --threads {threads} 
         """
+
+rule filter_paf:
+    input:
+        paf="data/{biosoft}/{sample}/{region}/{platform}/hash_k21/alignment.paf",
+    output:
+        filter_paf="data/{biosoft}/{sample}/{region}/{platform}/hash_k21/filter_alignment.paf",
+    shell:
+        """
+        awk '$10 >= 100 && ($10/$11) >= 0.2' {input.paf} > {output.filter_paf}
+        """
+        
+rule get_neighbors_paf:
+    input:
+        metadata="data/regional_reads/{sample}/{region}/{platform}/metadata.tsv.gz",
+        paf="data/{biosoft}/{sample}/{region}/{platform}/{encoding}/filter_alignment.paf.gz",
+    output:
+        nbr_indice="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{biosoft}_nbr_matrix.npz",
+        time="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{biosoft}_nn_time_tmp.json",
+    threads: 1
+    wildcard_constraints:
+        method=r"[^/]+",
+        biosoft=r'(minimap2|xRead|BLEND)',
+    conda:
+        "envs/evaluate.yaml"
+    shell:
+        """
+        python workflow/scripts/get_neighbors.smk.py --input {input.metadata} {input.paf} \
+        --output {output.nbr_indice} {output.time} --method {wildcards.biosoft} --threads {threads}
+        """
+
+rule get_neighbors_txt:
+    input:
+        metadata="data/regional_reads/{sample}/{region}/{platform}/metadata.tsv.gz",
+        paf_minimap2="data/{biosoft}/{sample}/{region}/{platform}/{encoding}/alignment.txt.gz",
+    output:
+        nbr_indice="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{biosoft}_nbr_matrix.npz",
+        time="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{biosoft}_nn_time_tmp.json",
+    threads: 1
+    wildcard_constraints:
+        method=r"[^/]+",
+        sample=r'(CHM13|rice|ara|droso|caenor)',
+        biosoft=r'(wtdbg2|MECAT2|MHAP|FEDRANN)',
+    conda:
+        "envs/evaluate.yaml"
+    shell:
+        """
+        python workflow/scripts/get_neighbors.smk.py --input {input.metadata} {input.paf_minimap2} \
+        --output {output.nbr_indice} {output.time} --method {wildcards.biosoft} --threads {threads}
+        """
+
 rule get_neighbors:
     input:
         feature_matrix="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/feature_matrix.npz",
@@ -371,60 +486,15 @@ rule get_neighbors:
         log="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{method}_time.log",
     threads: 64
     wildcard_constraints:
-        sample=r'(CHM13|rice|ara)',
-        method=r"^(?!(minimap2|xRead|BLEND|MHAP|MECAT2|wtdbg2)$)[^/]+$",
+        sample=r'(CHM13|rice|ara|droso|caenor)',
+        method=r'[A-Za-z]+_[A-Za-z]+_[A-Za-z]+_(\d+d_)?(IDF|TF|TF-IDF|None|binary|count)+',
     conda:
         "envs/evaluate.yaml"
     shell:
         """
         /usr/bin/time -v -o {output.log} \
-        python workflow/scripts/get_neighbors.smk.py --input {input.feature_matrix} {input.metadata} \
+        python workflow/scripts/get_neighbors.smk.py --input {input.metadata} {input.feature_matrix} \
         --output {output.nbr_indice} {output.time} --method {wildcards.method} --threads {threads}
-        """
-        
-rule get_neighbors_paf:
-    input:
-        feature_matrix="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/feature_matrix.npz",
-        metadata="data/regional_reads/{sample}/{region}/{platform}/metadata.tsv.gz",
-        paf="data/{biosoft}/{sample}/{region}/{platform}/{encoding}/filter_alignment.paf.gz",
-    output:
-        nbr_indice="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{biosoft}_nbr_matrix.npz",
-        time="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{biosoft}_nn_time.json",
-        log="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{biosoft}_time.log",
-    threads: 1
-    wildcard_constraints:
-        method=r"[^/]+",
-        biosoft=r'(minimap2|xRead|BLEND)',
-    conda:
-        "envs/evaluate.yaml"
-    shell:
-        """
-        /usr/bin/time -v -o {output.log} \
-        python workflow/scripts/get_neighbors.smk.py --input {input.feature_matrix} {input.metadata} {input.paf} \
-        --output {output.nbr_indice} {output.time} --method {wildcards.biosoft} --threads {threads}
-        """
-
-rule get_neighbors_txt:
-    input:
-        feature_matrix="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/feature_matrix.npz",
-        metadata="data/regional_reads/{sample}/{region}/{platform}/metadata.tsv.gz",
-        paf_minimap2="data/{biosoft}/{sample}/{region}/{platform}/{encoding}/alignment.txt.gz",
-    output:
-        nbr_indice="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{biosoft}_nbr_matrix.npz",
-        time="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{biosoft}_nn_time.json",
-        log="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{biosoft}_time.log",
-    threads: 1
-    wildcard_constraints:
-        method=r"[^/]+",
-        sample=r'(CHM13|rice|ara)',
-        biosoft=r'(wtdbg2|MECAT2|MHAP)',
-    conda:
-        "envs/evaluate.yaml"
-    shell:
-        """
-        /usr/bin/time -v -o {output.log} \
-        python workflow/scripts/get_neighbors.smk.py --input {input.feature_matrix} {input.metadata} {input.paf_minimap2} \
-        --output {output.nbr_indice} {output.time} --method {wildcards.biosoft} --threads {threads}
         """
 
 rule get_neighbors_params_tuning:
@@ -443,14 +513,14 @@ rule get_neighbors_params_tuning:
         evaluation_threads=r"[^/]+",
         method=r'[A-Za-z]+_[A-Za-z]+_[A-Za-z]+_(\d+d_)?(IDF|TF|TF-IDF|None|binary|count)+',
         param_type=r'ann|dim',
-        sample=r'(CHM13|rice|ara)'
+        sample=r'(CHM13|rice|ara|droso|caenor)',
     conda:
         "envs/evaluate.yaml"
     shell:
         """
         /usr/bin/time -v -o {output.log} \
         python workflow/scripts/get_neighbors.smk.py \
-            --input {input.feature_matrix} {input.metadata}\
+            --input {input.metadata} {input.feature_matrix}\
             --output {output.nbr_indice} {output.time} \
             --method {wildcards.method} \
             {params.param_flag} {input.params} \
@@ -474,13 +544,12 @@ rule get_neighbors_diff_n_neighbors:
     shell:
         """
         /usr/bin/time -v -o {output.log} \
-        python workflow/scripts/get_neighbors.smk.py --input {input.feature_matrix} {input.metadata} \
+        python workflow/scripts/get_neighbors.smk.py --input {input.metadata} {input.feature_matrix} \
         --output {output.nbr_indice} {output.time} --method {wildcards.method} --n-neighbors {wildcards.n_neighbors} --threads {threads}
         """
 
 rule evaluate_configs:
     input:
-        feature_matrix="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/feature_matrix.npz",
         metadata="data/regional_reads/{sample}/{region}/{platform}/metadata.tsv.gz",
         ref_graph="data/regional_reads/{sample}/{region}/{platform}/reference_graph.gpickle",
         nbr_indice="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{method}_nbr_matrix.npz",
@@ -495,7 +564,6 @@ rule evaluate_configs:
 
 use rule evaluate_configs as evaluate_configs_params_tuning with:
     input:
-        feature_matrix="data/feature_matrix/{sample}/{region}/{platform}/{encoding}/feature_matrix.npz",
         metadata="data/regional_reads/{sample}/{region}/{platform}/metadata.tsv.gz",
         ref_graph="data/regional_reads/{sample}/{region}/{platform}/reference_graph.gpickle",
         nbr_indice="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{config}/{method}_nbr_matrix.npz",
@@ -512,9 +580,44 @@ rule get_stat:
         python /home/miaocj/docker_dir/kNN-overlap-finder/workflow/scripts/generate_time_stat.py {input.log} {output.time_stat}
         """
         
-
-
+rule get_neighbors_txt1:
+    input:
+        metadata="data/regional_reads/{sample}/{region}/{platform}/metadata.tsv.gz",
+        paf_minimap2="data/FEDRANN/{sample}/{region}/{platform}/{encoding}/alignment_{suffix}.txt.gz",
+    output:
+        nbr_indice="data/evaluation64/{sample}/{region}/{platform}/{encoding}/FEDRANN_{suffix}_nbr_matrix.npz",
+        time="data/evaluation64/{sample}/{region}/{platform}/{encoding}/FEDRANN_{suffix}_nn_time_tmp.json",
+    threads: 1
+    wildcard_constraints:
+        sample=r'(CHM13|rice|ara|droso|caenor)',
+    conda:
+        "envs/evaluate.yaml"
+    shell:
+        """
+        python workflow/scripts/get_neighbors.smk.py --input {input.metadata} {input.paf_minimap2} \
+        --output {output.nbr_indice} {output.time} --method FEDRANN --threads {threads}
+        """
 # ----------------------------------------------------------------------------------------------------
+
+rule generate_filter_reads:
+    input:
+        "data/regional_reads/CHM13/all/filter3_real_ONT_R10/reads.fasta.gz"
+
+rule generate_filter_reads2:
+    input:
+        "data/regional_reads/droso/all/filter3_real_ONT/reads.fasta.gz"
+
+rule encoding_first:
+    input:
+        expand("data/feature_matrix/{region}/hash_k21/feature_matrix.npz",
+        region=["droso/all/filter3_real_ONT","ara/all/filter3_real_ONT2","caenor/all/filter3_real_ONT"])
+
+rule encoding_first2:
+    input:
+        expand("data/evaluation64/{region}/hash_k21/ann_NNDescent_config3/NNDescent_Cosine_mpSRP_2000d_IDF_{target}",
+        region=["droso/all/filter3_real_ONT","ara/all/filter3_real_ONT2","caenor/all/filter3_real_ONT"],
+        target=['time_rss.tsv','full_stat.tsv'])
+
 rule minimap2_for_all2:
     input:
         expand("data/minimap2/{region}/alignment.paf",
@@ -539,36 +642,36 @@ rule test_biosoft:
         "data/MHAP/ara/all/filter3_real_ONT/kmer_k21/alignment.txt.gz",
         "data/wtdbg2/ara/all/filter3_real_ONT/kmer_k21/alignment.txt.gz"
 
+rule generate_graph:
+    input:
+        expand("data/regional_reads/CHM13/all/filter3_real_{platform}/reference_graph.gpickle",
+        platform=['wy','pb','ONT_R10'])
+
 rule test_biosoft2:
     input:
-        expand("data/evaluation64/CHM13/HLA/filter3_real_pb/kmer_k21/{biosoft}_full_stat.tsv",
-        biosoft=['minimap2','xRead','BLEND','MHAP','MECAT2','wtdbg2'])
+        expand("data/evaluation64/CHM13/all/{platform}/hash_k21/{biosoft}_{target}",
+        platform=['filter3_real_wy'],
+        biosoft=['BLEND','minimap2'],
+        target=['time_rss.tsv','full_stat.tsv'])
+rule test_biosoft3:
+    input:
+        expand("data/evaluation64/ara/all/filter3_real_ONT2/hash_k21/{biosoft}_{target}",
+        biosoft=['xRead','BLEND','MECAT2','wtdbg2','MHAP','minimap2'],
+        target=['time_rss.tsv','full_stat.tsv'])
 
-rule wgs:
+rule test_biosoft_ont:
     input:
-        expand("data/evaluation64/{region}/hash_k21/ann_NNDescent_config3/NNDescent_Cosine_SparseRP_3000d_IDF_integral_stat.tsv",
-        region=['ara/all/filter3_real_ONT','rice/all/filter3_real_ONT_new'])
+        expand("data/evaluation64/CHM13/all/{platform}/hash_k21/{biosoft}_{target}",
+        platform=['filter3_real_ONT_R10'],
+        biosoft=['xRead','minimap2','BLEND','wtdbg2'], #'MECAT2','MHAP'
+        target=['time_rss.tsv','full_stat.tsv'])
 
-rule xread:
+rule test_biosoft_pb:
     input:
-        expand("data/xRead/{region}/kmer_k21/alignment.paf",
-        region=['CHM13/all/filter3_real_cyclone','CHM13/all/filter3_real_ONT'])
-
-rule mhap:
-    input:
-        expand("data/evaluation64/{region}/kmer_k11/MHAP_integral_stat.tsv",
-        region=[
-        'CHM13/IGK/filter3_real_cyclone','CHM13/IGK/filter3_real_ONT','CHM13/IGK/filter3_real_pb',
-        'CHM13/HLA/filter3_real_cyclone','CHM13/HLA/filter3_real_ONT','CHM13/HLA/filter3_real_pb',]
-        )
-
-rule mhap_try:
-    input:
-        expand("data/mhap/CHM13/chr22_51M/real_cyclone/kmer_k16/mhap.txt",
-        )
-rule all:
-    input:
-        "data/evaluation64/CHM13/all/filter3_real_cyclone/kmer_k21/ann_NNDescent_config3/NNDescent_Cosine_SparseRP_3000d_IDF_integral_stat.tsv",
+        expand("data/evaluation64/CHM13/all/{platform}/hash_k21/{biosoft}_{target}",
+        platform=['filter3_real_pb'],
+        biosoft=['xRead','minimap2','BLEND','wtdbg2','MECAT2'], #'MHAP',
+        target=['time_rss.tsv','full_stat.tsv'])
 
 rule simulate_chr1:
     input:
@@ -577,136 +680,87 @@ rule simulate_chr1:
 
 rule rpf:
     input:
-        expand("data/evaluation64/{region}/kmer_k11/ann_RPForest_config1/RPForest_Cosine_SparseRP_3000d_IDF_integral_stat.tsv",
-        region=['CHM13/IGK/real_cyclone','CHM13/HLA/real_cyclone',
-        'CHM13/IGK/real_ONT','CHM13/HLA/real_ONT',
-        'ara/chr1_30M/real_ONT','rice/chr1_43M/real_ONT_new',
-        'CHM13/chr22_51M/real_cyclone','CHM13/chr22_51M/real_ONT',
-        'CHM13/chr1_248M/real_cyclone','CHM13/chr1_248M/real_ONT'])
+        expand("data/evaluation64/{region}/hash_k21/ann_RPForest_config1/RPForest_Cosine_SparseRP_2000d_IDF_full_stat.tsv",
+        region=['CHM13/IGK/filter3_real_wy','CHM13/IGK/filter3_real_ONT_R10','CHM13/IGK/filter3_real_pb',
+        'CHM13/HLA/filter3_real_wy','CHM13/HLA/filter3_real_ONT_R10','CHM13/HLA/filter3_real_pb'])
+
+rule all_test0:
+    input:
+        expand('data/evaluation64/{region}/hash_k21/{method}_full_stat.tsv',
+        method=['MHAP','minimap2','Exact_Cosine_None_IDF'],
+        region=['CHM13/IGK/filter3_real_wy','CHM13/IGK/filter3_real_ONT_R10','CHM13/IGK/filter3_real_pb',
+        'CHM13/HLA/filter3_real_wy','CHM13/HLA/filter3_real_ONT_R10','CHM13/HLA/filter3_real_pb',
+        'CHM13/chr22_51M/filter3_real_wy','CHM13/chr22_51M/filter3_real_ONT_R10','CHM13/chr22_51M/filter3_real_pb',
+        'droso/all/filter3_real_ONT','caenor/all/filter3_real_ONT'])
+
+rule supple:
+    input:
+        expand("data/evaluation64/{region}/hash_k21/Exact_{distance}_None_{preprocess}_full_stat.tsv",
+        region=['CHM13/IGK/filter3_real_wy','CHM13/IGK/filter3_real_ONT_R10','CHM13/IGK/filter3_real_pb',
+        'CHM13/HLA/filter3_real_wy','CHM13/HLA/filter3_real_ONT_R10','CHM13/HLA/filter3_real_pb',
+        'CHM13/chr22_51M/filter3_real_wy','CHM13/chr22_51M/filter3_real_ONT_R10','CHM13/chr22_51M/filter3_real_pb'],
+        distance=['Cosine','Euclidean'],
+        preprocess=['TF','IDF','TF-IDF','binary','count'])
 
 rule all_test1:
     input:
-        expand("data/evaluation64/{region}/kmer_k21/Exact_{distance}_None_{preprocess}_integral_stat.tsv",
-        region=['CHM13/IGK/filter3_real_cyclone','CHM13/IGK/filter3_real_ONT','CHM13/IGK/filter3_real_pb',
-        'CHM13/HLA/filter3_real_cyclone','CHM13/HLA/filter3_real_ONT','CHM13/HLA/filter3_real_pb',
-        'ara/chr1_30M/filter3_real_ONT','rice/chr1_43M/filter3_real_ONT_new',
-        'CHM13/chr22_51M/filter3_real_cyclone','CHM13/chr22_51M/filter3_real_ONT','CHM13/chr22_51M/filter3_real_pb'],
-        distance=['Cosine','Euclidean'],
-        preprocess=['TF','IDF','TF-IDF','binary','count']), ## chr1 不抽样需要17个小时
-        expand("data/evaluation64/{region}/filter3_real_{platform}/kmer_k21/Exact_Cosine_{dim_method}_1000d_IDF_integral_stat.tsv",
+        expand("data/evaluation64/{region}/filter3_real_{platform}/hash_k21/Exact_Cosine_{dim_method}_1000d_IDF_full_stat.tsv",
         region=['CHM13/IGK','CHM13/HLA'],
-        platform=['cyclone','pb','ONT'],
-        dim_method=['Spectural','GaussianRP','SparseRP','umap','PCA','scBiMap']),
-        expand("data/evaluation64/{region}/kmer_k21/{method}_integral_stat.tsv",
-        region=['CHM13/IGK/filter3_real_cyclone','CHM13/IGK/filter3_real_ONT','CHM13/IGK/filter3_real_pb',
-        'CHM13/HLA/filter3_real_cyclone','CHM13/HLA/filter3_real_ONT','CHM13/HLA/filter3_real_pb'],
+        platform=['wy','pb','ONT'],
+        dim_method=['Spectural','GaussianRP','SparseRP','umap','PCA','scBiMap']), ## PCA scBimap 在wyHLA 无法运行成功
+        expand("data/evaluation64/{region}/hash_k21/{method}_full_stat.tsv",
+        region=['CHM13/IGK/filter3_real_wy','CHM13/IGK/filter3_real_ONT_R10','CHM13/IGK/filter3_real_pb',
+        'CHM13/HLA/filter3_real_wy','CHM13/HLA/filter3_real_ONT_R10','CHM13/HLA/filter3_real_pb'],
         method=['SimHash_Hamming_None_IDF']),
-        expand("data/evaluation64/{region}/kmer_k21/Exact_{distance}_{dim_method}_1000d_IDF_integral_stat.tsv",
-        region=['CHM13/IGK/filter3_real_cyclone','CHM13/IGK/filter3_real_ONT','CHM13/IGK/filter3_real_pb',
-        'CHM13/HLA/filter3_real_cyclone','CHM13/HLA/filter3_real_ONT','CHM13/HLA/filter3_real_pb',
-        'ara/chr1_30M/filter3_real_ONT','rice/chr1_43M/filter3_real_ONT_new',
-        'CHM13/chr22_51M/filter3_real_cyclone','CHM13/chr22_51M/filter3_real_ONT','CHM13/chr22_51M/filter3_real_pb'],
-        distance=['Cosine','Euclidean'],dim_method=['GaussianRP','SparseRP'])  ##umap 在chr1 无法运行成功 降维花了7个小时
+        expand("data/evaluation64/{region}/hash_k21/Exact_{distance}_{dim_method}_1000d_IDF_full_stat.tsv",
+        region=['CHM13/IGK/filter3_real_wy','CHM13/IGK/filter3_real_ONT_R10','CHM13/IGK/filter3_real_pb',
+        'CHM13/HLA/filter3_real_wy','CHM13/HLA/filter3_real_ONT_R10','CHM13/HLA/filter3_real_pb',
+        'CHM13/chr22_51M/filter3_real_wy','CHM13/chr22_51M/filter3_real_ONT_R10','CHM13/chr22_51M/filter3_real_pb'],
+        distance=['Cosine','Euclidean'],dim_method=['GaussianRP','SparseRP'])  ##umap 在chr1 无法运行成功 降维花了7个小时  grp droso 运行超过7h
 # rule dimension_method2:
 #     input:
 rule all_test2:
     input:
-        # expand("data/evaluation64/{region}/kmer_k21/Exact_Cosine_SparseRP_{dim}d_IDF_integral_stat.tsv",
-        # region=['CHM13/IGK/filter3_real_cyclone','CHM13/IGK/filter3_real_ONT','CHM13/IGK/filter3_real_pb',
-        # 'CHM13/HLA/filter3_real_cyclone','CHM13/HLA/filter3_real_ONT','CHM13/HLA/filter3_real_pb',
-        # 'ara/chr1_30M/filter3_real_ONT','rice/chr1_43M/filter3_real_ONT_new',
-        # 'CHM13/chr22_51M/filter3_real_cyclone','CHM13/chr22_51M/filter3_real_ONT','CHM13/chr22_51M/filter3_real_pb'],
-        # dim=[100,500,1000,2000,3000,6000]),
-        expand("data/evaluation64/{region}/kmer_k11/ann_NNDescent_config3/NNDescent_Cosine_SparseRP_{dim}d_IDF_integral_stat.tsv",
-        region=['CHM13/chr1_248M/filter3_real_cyclone'],
-        dim=[100,500,1000,2000,3000,6000]),
+        expand("data/evaluation64/{region}/hash_k21/Exact_Cosine_SparseRP_{dim}d_IDF_full_stat.tsv",
+        region=['CHM13/IGK/filter3_real_wy','CHM13/IGK/filter3_real_ONT_R10','CHM13/IGK/filter3_real_pb',
+        'CHM13/HLA/filter3_real_wy','CHM13/HLA/filter3_real_ONT_R10','CHM13/HLA/filter3_real_pb',
+        'CHM13/chr22_51M/filter3_real_wy','CHM13/chr22_51M/filter3_real_ONT_R10','CHM13/chr22_51M/filter3_real_pb'],
+        dim=[100,300,500,1000,2000,3000]),
+        # expand("data/evaluation64/{region}/hash_k21/Exact_Cosine_SparseRP_{dim}d_IDF_full_stat.tsv",
+        # region=['droso/all/filter3_real_ONT','caenor/all/filter3_real_ONT'],
+        # dim=[100,300,500,1000,2000,3000])
+
 rule all_test3:
     input:
-        expand("data/evaluation64/CHM13/chr1_248M/filter3_real_cyclone/kmer_k21/ann_NNDescent_{config}/NNDescent_Cosine_SparseRP_2000d_IDF_integral_stat.tsv",
+        expand("data/evaluation64/CHM13/chr1_248M/filter3_real_wy/kmer_k21/ann_NNDescent_{config}/NNDescent_Cosine_SparseRP_2000d_IDF_full_stat.tsv",
         config=['default','config1','config2','config3','config4','config5']),
-        expand("data/evaluation64/CHM13/chr1_248M/filter3_real_cyclone/kmer_k21/ann_{config}/PQ_Cosine_SparseRP_2000d_IDF_integral_stat.tsv",
+        expand("data/evaluation64/CHM13/chr1_248M/filter3_real_wy/kmer_k21/ann_{config}/PQ_Cosine_SparseRP_2000d_IDF_integral_stat.tsv",
         config=['PQ_config1','PQ_config2','PQ_config5','PQ_default']),
-        expand("data/evaluation64/CHM13/chr1_248M/filter3_real_cyclone/kmer_k21/ann_{config}/HNSW_Cosine_SparseRP_2000d_IDF_integral_stat.tsv",
+        expand("data/evaluation64/CHM13/chr1_248M/filter3_real_wy/kmer_k21/ann_{config}/HNSW_Cosine_SparseRP_2000d_IDF_integral_stat.tsv",
         config=['HNSW_config1','HNSW_config2','HNSW_config3','HNSW_config4','HNSW_config5','HNSW_default']),
-        expand("data/evaluation64/CHM13/chr1_248M/filter3_real_cyclone/kmer_k21/ann_{config}/IVFPQ_Cosine_SparseRP_2000d_IDF_integral_stat.tsv",
-        config=['IVFPQ_config1','IVFPQ_config2','IVFPQ_config3','IVFPQ_config4','IVFPQ_config5','IVFPQ_default'])
-
-rule dimension_method2_1:
-    input:
-        expand("data/evaluation64/{region}/kmer_k21/{method}_nbr_matrix.npz",
-        region=['CHM13/IGK/filter3_real_cyclone','CHM13/IGK/filter3_real_ONT','CHM13/IGK/filter3_real_pb',
-        'CHM13/HLA/filter3_real_cyclone','CHM13/HLA/filter3_real_ONT','CHM13/HLA/filter3_real_pb',
-        'ara/chr1_30M/filter3_real_ONT','rice/chr1_43M/filter3_real_ONT_new',
-        'CHM13/chr22_51M/filter3_real_cyclone','CHM13/chr22_51M/filter3_real_ONT','CHM13/chr22_51M/filter3_real_pb'],
-        method=['SimHash_Hamming_None_IDF','MinHash_Jaccard_None_IDF']),
-
-
-
-
-rule dimension_method3:
-    input:
-        expand("data/evaluation64/{region}/kmer_k21/Exact_{distance}_{dim_method}_3000d_IDF_integral_stat.tsv",
-        region=['CHM13/IGK/filter3_real_cyclone','CHM13/IGK/filter3_real_ONT','CHM13/IGK/filter3_real_pb',
-        'CHM13/HLA/filter3_real_cyclone','CHM13/HLA/filter3_real_ONT','CHM13/HLA/filter3_real_pb',
-        'ara/chr1_30M/filter3_real_ONT','rice/chr1_43M/filter3_real_ONT_new',
-        'CHM13/chr22_51M/filter3_real_cyclone','CHM13/chr22_51M/filter3_real_ONT','CHM13/chr22_51M/filter3_real_pb'],
-        distance=['Cosine','Euclidean'],dim_method=['GaussianRP','SparseRP'])  ##umap 在chr1 无法运行成功 降维花了7个小时
-
-rule dimensions5:
-    input:
-        expand("data/evaluation64/{region}/kmer_k21/Exact_Cosine_SparseRP_{dim}d_IDF_nbr_matrix.npz",
-        region=['CHM13/IGK/real_cyclone','CHM13/IGK/real_ONT','CHM13/IGK/real_pb',
-        'CHM13/HLA/real_cyclone','CHM13/HLA/real_ONT','CHM13/HLA/real_pb',
-        'ara/chr1_30M/real_ONT','rice/chr1_43M/real_ONT_new',
-        'CHM13/chr22_51M/real_cyclone','CHM13/chr22_51M/real_ONT','CHM13/chr22_51M/real_pb'],
-        dim=[100,500,1000,2000,3000,6000])
-
-rule dimensions8:
-    input:
-        expand("data/evaluation64/{region}/kmer_k11/ann_NNDescent_config3/NNDescent_Cosine_SparseRP_{dim}d_IDF_integral_stat.tsv",
-        region=['CHM13/chr1_248M/filter3_real_cyclone','CHM13/chr1_248M/filter3_real_ONT','CHM13/chr1_248M/filter3_real_pb'],
-        dim=[100,500,1000,2000,3000,6000])
-
-rule test_srp_params:
-    input:
-        expand("data/evaluation64/CHM13/chr1_248M/filter3_real_cyclone/kmer_k21/ann_NNDescent_{config}/NNDescent_Cosine_SparseRP_3000d_IDF_integral_stat.tsv",
-        config=['default','config1','config2','config3','config4','config5'])
-
-
-rule PQ_PT2:
-    input:
-        expand("data/evaluation64/CHM13/chr1_248M/filter3_real_cyclone/kmer_k21/ann_{config}/PQ_Cosine_SparseRP_3000d_IDF_integral_stat.tsv",
-        config=['PQ_config1','PQ_config2','PQ_config5','PQ_default'])
-
-rule HNSW_PT3:
-    input:
-        expand("data/evaluation64/CHM13/chr1_248M/filter3_real_cyclone/kmer_k21/ann_{config}/HNSW_Cosine_SparseRP_3000d_IDF_integral_stat.tsv",
-        config=['HNSW_config1','HNSW_config2','HNSW_config3','HNSW_config4','HNSW_config5','HNSW_default'])
-
-rule IVFPQ_PT5:
-    input:
-        expand("data/evaluation64/CHM13/chr1_248M/filter3_real_cyclone/kmer_k21/{config}/IVFPQ_Cosine_SparseRP_3000d_IDF_nn_time.json",
+        expand("data/evaluation64/CHM13/chr1_248M/filter3_real_wy/kmer_k21/ann_{config}/IVFPQ_Cosine_SparseRP_2000d_IDF_integral_stat.tsv",
         config=['IVFPQ_config1','IVFPQ_config2','IVFPQ_config3','IVFPQ_config4','IVFPQ_config5','IVFPQ_default'])
 
 ##先测参数
 rule ann_test7:
     input:
-        expand("data/evaluation64/{region}/kmer_k21/{method}_integral_stat.tsv",
+        expand("data/evaluation64/{region}/hash_k21/{method}_full_stat.tsv",
         method=['ann_NNDescent_config3/NNDescent_Cosine_SparseRP_1000d_IDF',
                 'ann_HNSW_config1/HNSW_Cosine_SparseRP_1000d_IDF',
                 'ann_PQ_config2/PQ_Cosine_SparseRP_1000d_IDF',
                 'ann_IVFPQ_config5/IVFPQ_Cosine_SparseRP_1000d_IDF'],
-        region=['CHM13/IGK/filter3_real_cyclone','CHM13/IGK/filter3_real_ONT','CHM13/IGK/filter3_real_pb',
-        'CHM13/HLA/filter3_real_cyclone','CHM13/HLA/filter3_real_ONT','CHM13/HLA/filter3_real_pb',
-        'ara/chr1_30M/filter3_real_ONT','rice/chr1_43M/filter3_real_ONT_new',
-        'CHM13/chr22_51M/filter3_real_cyclone','CHM13/chr22_51M/filter3_real_ONT','CHM13/chr22_51M/filter3_real_pb',
-        'CHM13/chr1_248M/filter3_real_cyclone','CHM13/chr1_248M/filter3_real_ONT','CHM13/chr1_248M/filter3_real_pb'])
+        region=['CHM13/IGK/filter3_real_wy','CHM13/IGK/filter3_real_ONT_R10',
+        'CHM13/HLA/filter3_real_wy','CHM13/HLA/filter3_real_ONT_R10',
+        'CHM13/chr22_51M/filter3_real_wy','CHM13/chr22_51M/filter3_real_ONT_R10',
+        'droso/all/filter3_real_ONT','caenor/all/filter3_real_ONT'])
 
 rule test_k:
     input:
-        expand("data/evaluation64/CHM13/{region}/filter3_real_cyclone/kmer_k{k}/ann_NNDescent_config3/NNDescent_Cosine_SparseRP_3000d_IDF_integral_stat.tsv",
-        region=['chr1_248M'],
-        k=[5,7,9,11,13,15,17,19,21])
+        expand("data/evaluation64/{region}/hash_k{k}/Exact_Cosine_None_TF-IDF_full_stat.tsv",
+        region=['CHM13/IGK/filter3_real_wy','CHM13/IGK/filter3_real_ONT_R10',
+        'CHM13/HLA/filter3_real_wy','CHM13/HLA/filter3_real_ONT_R10',
+        'CHM13/chr22_51M/filter3_real_wy','CHM13/chr22_51M/filter3_real_ONT_R10'],
+        k=[7,9,11,13,15,17,19,21,23])
 
 rule ann_test8:
     input:
@@ -850,14 +904,14 @@ rule chr1_test:
     input:
         "data/evaluation/CHM13/chr1_248M/real_cyclone/kmer_k16/HNSW_Cosine_SparseRP_6000d_IDF_overlap_sizes.pkl"
 
-rule generate_simulate_data:
+rule simulate_data:
     input:
-        expand("data/evaluation/{sample}/pbsim_ONT_{accuracy}_{length_kb}k_{depth}dep/kmer_k16/Exact_Cosine_None_{preprocess}_overlap_sizes.pkl",
+        expand("data/evaluation/{sample}/pbsim_ONT_{accuracy}_{length_kb}k_{depth}dep/kmer_k16/Exact_Cosine_None_{preprocess}_full_stat.tsv",
         sample=['CHM13/IGK','rice/chr1_43M'],
         accuracy=['99','97','95','93','91'],
         length_kb=[10,15,20,25,30],
         depth=[10,30,50],
-        preprocess=['TF-IDF'])
+        preprocess=['IDF'])
 
 rule rpf_PT:
     input:

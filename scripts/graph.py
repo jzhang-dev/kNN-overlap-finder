@@ -159,42 +159,12 @@ class OverlapGraph(nx.Graph):
                     )
             if len(parent_reads) == 1:
                 contained_reads.add(read_0)
-
+        print('1')
         # Label contained reads
         nx.set_node_attributes(graph, "contained", False)
         for read in contained_reads:
             graph.nodes[read]["contained"] = True
 
-        # Identify non-redundant overlaps
-        min_overhang_size = []
-        for node_0 in graph.nodes():
-            nearest_left_node = None
-            min_left_overhang = float("inf")
-            nearest_right_node = None
-            min_right_overhang = float("inf")
-            for node_1, data in graph[node_0].items():
-                if (
-                    data["left_overhang_node"] == node_1
-                    and data["left_overhang_size"] < min_left_overhang
-                ):
-                    min_left_overhang = data["left_overhang_size"]
-                    nearest_left_node = node_1
-                if (
-                    data["right_overhang_node"] == node_1
-                    and data["right_overhang_size"] < min_right_overhang
-                ):
-                    min_right_overhang = data["right_overhang_size"]
-                    nearest_right_node = node_1
-            min_overhang_size.append(min_left_overhang)
-            min_overhang_size.append(min_right_overhang)
-            if nearest_left_node is not None:
-                graph[node_0][nearest_left_node]["redundant"] = False
-            if nearest_right_node is not None:
-                graph[node_0][nearest_right_node]["redundant"] = False
-        import math
-        filtered_data = [x for x in min_overhang_size if not math.isinf(x)]
-        mean_overhang_size = sum(filtered_data)/len(filtered_data)
-        print(mean_overhang_size)
         return graph
 
     def align_edges(
