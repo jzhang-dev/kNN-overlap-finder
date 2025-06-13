@@ -42,7 +42,7 @@ def get_overlap_candidates(
     overlap_candidates = []
     for i1, row in enumerate(neighbor_indices):
         k1 = _read_ids[i1]
-        row = row[(row >= 0) & (row != row[0])]
+        row = row[(row >= 0) & (row != i1)]
         for neighbor_order, i2 in enumerate(row[:n_neighbors]):
             overlap_candidates.append((k1, _read_ids[i2], {"neighbor_order": neighbor_order}))
     return overlap_candidates

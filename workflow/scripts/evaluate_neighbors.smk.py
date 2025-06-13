@@ -53,7 +53,11 @@ filter_reference_edges = set(
 max_n_neighbors = 19
 df_rows = []
 read_ids = np.array(list(meta_df.index))
-k_values = np.arange(1, max_n_neighbors)
+if sample == 'CHM13' and region == 'all':
+    print('for human WGS reads, only generate neighbor graph for k=6, k =12 and k=18')
+    k_values = [6,12,18]
+else:
+    k_values = np.arange(1, max_n_neighbors)
 
 neighbor_edges_nums = []
 precisions = []
@@ -104,7 +108,7 @@ di = {
     'platform':platform,
     'encode':encode,
     'method':method,
-    'n_neighbors':range(1,max_n_neighbors),
+    'n_neighbors':k_values,
     'edges_num':neighbor_edges_nums,
     'precision':precisions,
     'overlap_size':mean_overlap_sizes,

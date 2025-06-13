@@ -183,41 +183,10 @@ class OverlapGraph(nx.Graph):
 
     @classmethod
     def from_intervals(cls, read_intervals: Mapping[int, Collection[GenomicInterval]], num_processes: int = 30):
-        # 1. 构建 Interval Trees（单线程）
-        trees = get_interval_trees(read_intervals=read_intervals)
         graph = cls()
         
-        # 2. 使用 sharedmem 并行处理重叠计算
-        with sharedmem.MapReduce(np=num_processes) as pool:
-            # 2.1 定义每个进程的任务
-            def process_read(read_0):
-                if read_0 % 10000 == 0:
-                    print(read_0/len(read_intervals))
-                local_edges = []
-
-                for intv in read_intervals[read_0]:
-                    tree = trees[intv.chromosome]
-                    start_0, end_0 = intv.start, intv.end
-                    
-                    for intv_1 in tree.overlap(start_0, end_0):
-                        read_1 = intv_1.data
-                        if read_1 == read_0:
-                            continue
-                        
-                        start_1, end_1 = intv_1.begin, intv_1.end
-                    
-                        overlap_size = max(0, min(end_0, end_1) - max(start_0, start_1))
-                        local_edges.append((read_0, read_1, overlap_size))
-                
-                # 返回该 read 的所有边和是否被包含
-                return local_edges
-
-            # 2.2 并行执行
-            results = pool.map(process_read, read_intervals.keys())
-        print('sharedmem done')
-        
-        with open('/home/miaocj/docker_dir/kNN-overlap-finder/data/ont_ref_graph_out.pkl','wb') as f:
-            pickle.dump(results,f)
+        with open('/home/miaocj/docker_dir/kNN-overlap-finder/data/ont_ref_graph_out.pkl','rb') as f:
+            results=pickle.load(f)
         print("pickle saved")
         # 3. 合并结果
         for edges in results:

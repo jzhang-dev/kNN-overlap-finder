@@ -562,6 +562,20 @@ rule evaluate_configs:
     script:
         "scripts/evaluate_neighbors.smk.py" 
 
+rule evaluate_configs_partial:
+    input:
+        ref_graph="data/regional_reads/{sample}/{region}/{platform}/reference_graph.gpickle",
+        nbr_indice="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{method}_nbr_matrix.npz",
+    output:
+        integral_stat="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{method}_part_stat.tsv",
+        tp_counter="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{method}_tp_counter.pkl"
+    wildcard_constraints:
+        method=r'[^/]+',
+    conda:
+        "envs/evaluate.yaml"
+    script:
+        "scripts/evaluate_neighbors_easily.smk.py" 
+
 use rule evaluate_configs as evaluate_configs_params_tuning with:
     input:
         metadata="data/regional_reads/{sample}/{region}/{platform}/metadata.tsv.gz",
@@ -569,6 +583,14 @@ use rule evaluate_configs as evaluate_configs_params_tuning with:
         nbr_indice="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{config}/{method}_nbr_matrix.npz",
     output:
         integral_stat="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{config}/{method}_full_stat.tsv",
+
+use rule evaluate_configs_partial as evaluate_configs_partial_params_tuning with:
+    input:
+        ref_graph="data/regional_reads/{sample}/{region}/{platform}/reference_graph.gpickle",
+        nbr_indice="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{config}/{method}_nbr_matrix.npz",
+    output:
+        integral_stat="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{config}/{method}_part_stat.tsv",
+        tp_counter="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{config}/{method}_tp_counter.pkl"
 
 rule get_stat:
     input:
@@ -598,7 +620,15 @@ rule get_neighbors_txt1:
         --output {output.nbr_indice} {output.time} --method FEDRANN --threads {threads}
         """
 # ----------------------------------------------------------------------------------------------------
-
+rule tmp4:
+    input:
+        expand('data/evaluation64/{region}/hash_k21/{method}_full_stat.tsv',
+        method=['SimHash_Hamming_None_IDF','Exact_Cosine_umap_1000d_IDF'],
+        region=['CHM13/chr22_51M/filter3_real_wy','CHM13/chr22_51M/filter3_real_ONT_R10','CHM13/chr22_51M/filter3_real_pb'])
+# rule wgs:
+# 	input:
+#         expand("data/evaluation64/CHM13/all/filter3_real_{platform}/hash_k21/{method}_full_stat.tsv",
+#         platform=['wy','pb'],method=['minimap2','BLEND'])
 rule generate_filter_reads:
     input:
         "data/regional_reads/CHM13/all/filter3_real_ONT_R10/reads.fasta.gz"
@@ -652,12 +682,14 @@ rule test_biosoft2:
         expand("data/evaluation64/CHM13/all/{platform}/hash_k21/{biosoft}_{target}",
         platform=['filter3_real_wy'],
         biosoft=['BLEND','minimap2'],
-        target=['time_rss.tsv','full_stat.tsv'])
+        target=['time_rss.tsv','part_stat.tsv'])
+
 rule test_biosoft3:
     input:
-        expand("data/evaluation64/ara/all/filter3_real_ONT2/hash_k21/{biosoft}_{target}",
-        biosoft=['xRead','BLEND','MECAT2','wtdbg2','MHAP','minimap2'],
-        target=['time_rss.tsv','full_stat.tsv'])
+        expand("data/evaluation64/CHM13/all/filter3_real_{platform}/hash_k21/{biosoft}_{target}",
+        platform=['pb','wy','ONT_R10'],
+        biosoft=['xRead','BLEND','MECAT2','wtdbg2','minimap2'],
+        target=['part_stat.tsv'])
 
 rule test_biosoft_ont:
     input:
@@ -680,9 +712,10 @@ rule simulate_chr1:
 
 rule rpf:
     input:
-        expand("data/evaluation64/{region}/hash_k21/ann_RPForest_config1/RPForest_Cosine_SparseRP_2000d_IDF_full_stat.tsv",
+        expand("data/evaluation64/{region}/hash_k21/ann_RPForest_config1/RPForest_Cosine_SparseRP_1000d_IDF_full_stat.tsv",
         region=['CHM13/IGK/filter3_real_wy','CHM13/IGK/filter3_real_ONT_R10','CHM13/IGK/filter3_real_pb',
-        'CHM13/HLA/filter3_real_wy','CHM13/HLA/filter3_real_ONT_R10','CHM13/HLA/filter3_real_pb'])
+        'CHM13/HLA/filter3_real_wy','CHM13/HLA/filter3_real_ONT_R10','CHM13/HLA/filter3_real_pb',
+        'droso/all/filter3_real_ONT','caenor/all/filter3_real_ONT'])
 
 rule all_test0:
     input:
