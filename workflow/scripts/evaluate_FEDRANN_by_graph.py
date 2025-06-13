@@ -1,6 +1,10 @@
 import pickle, sys
 import numpy as np
 import collections
+import pandas as pd
+import os, re
+import json
+
 sys.path.append('/home/miaocj/docker_dir/kNN-overlap-finder/scripts')
 def get_sibling_id(x: int) -> int:
     if x % 2 == 0:
@@ -63,7 +67,7 @@ def calculate_precision(neighbor_matrix, G):
         print(f"Precision with {n} neighbors: {precision}")
     return precisions
 
-def statistic_fp_numbers_of_reads(neighbor_matrix, G):
+def statistic_tp_numbers_of_reads(neighbor_matrix, G):
     one_read_tp_neighbors_numbers = []
     for i, neighbors in enumerate(neighbor_matrix):
         one_read_tp_neighbors = 0
@@ -75,26 +79,68 @@ def statistic_fp_numbers_of_reads(neighbor_matrix, G):
     return one_read_tp_neighbors_counter
 
 def main():
-    overlap_txt_path = sys.argv[1]
-    ref_graph_path = sys.argv[2]
-    nbr_path = sys.argv[3]
 
-    # nbr_matrix = FEDRANNNearestNeighbors().get_neighbors(
-    #     overlap_txt=overlap_txt_path,
-    #     n_neighbors=20
-    # )
-    # print(nbr_matrix)
-    # print("neighbor matrix loading done")
-    # np.savez(nbr_path, nbr_matrix)
-    nbr_matrix = np.load(nbr_path)['arr_0']
+    suffix = sys.argv[1]
+    platform = sys.argv[2]
+    species = sys.argv[3]
+
+    overlap_txt_path = f'/home/miaocj/docker_dir/kNN-overlap-finder/data/FEDRANN/{species}/all/filter3_real_{platform}/hash_k21/alignment_{suffix}.txt'
+    new_metadata_path = f'/home/miaocj/docker_dir/kNN-overlap-finder/data/FEDRANN/{species}/all/filter3_real_{platform}/hash_k21/metadata_{suffix}.tsv'
+    nbr_path = f'/home/miaocj/docker_dir/kNN-overlap-finder/data/FEDRANN/{species}/all/filter3_real_{platform}/nbr_matrix_{suffix}.npz'
+    stat_path = f'/home/miaocj/docker_dir/kNN-overlap-finder/data/FEDRANN/{species}/all/filter3_real_{platform}/part_stat_{suffix}.tsv'
+    ref_graph_path = f'/home/miaocj/docker_dir/kNN-overlap-finder/data/regional_reads/{species}/all/filter3_real_{platform}/reference_graph.gpickle'
+    metadata_old_path = f'/home/miaocj/docker_dir/kNN-overlap-finder/data/regional_reads/{species}/all/filter3_real_{platform}/metadata.tsv.gz'
+
+    if os.path.exists(overlap_txt_path) and os.path.exists(new_metadata_path) and os.path.exists(ref_graph_path) and os.path.exists(metadata_old_path):
+        print("All input files exist, proceeding with evaluation.")
+    else:
+        print("One or more input files are missing. Please check the paths.")
+        print(overlap_txt_path, new_metadata_path, ref_graph_path, metadata_old_path)
+        return
+    
+    if os.path.exists(nbr_path):
+        print(f"Neighbor matrix already exists at {nbr_path}. Loading from file.")
+        nbr_matrix = np.load(nbr_path)['arr_0']
+    else:
+        nbr_matrix = FEDRANNNearestNeighbors().get_neighbors(
+            overlap_txt=overlap_txt_path,
+            n_neighbors=20
+        )
+        print(nbr_matrix)
+        print("neighbor matrix loading done")
+        # nbr_matrix = np.load(nbr_path)['arr_0']
+
+        metadata_mcj = pd.read_csv(metadata_old_path, sep='\t')
+        metadata_zjy = pd.read_csv(new_metadata_path, sep='\t')
+        metadata_mcj['strand'] = metadata_mcj['read_orientation'].replace({'+': 0, '-': 1})
+        merged_df = pd.merge(
+            metadata_mcj, 
+            metadata_zjy, 
+            on=['read_name', 'strand'], 
+            how='inner'
+        )
+        id_transfor_dict = dict(zip(merged_df['index'],merged_df['read_id']))
+        new_nbr_matrix = np.empty(nbr_matrix.shape, dtype=np.int32)
+        new_nbr_matrix[:, :] = -1
+        for i in range(nbr_matrix.shape[0]):
+            new_nbr_matrix[id_transfor_dict[i], :len(nbr_matrix[i])] =  [id_transfor_dict[x] for x in nbr_matrix[i]]
+        np.savez(nbr_path, nbr_matrix)
 
     with open(ref_graph_path,'rb') as f:
         reference_graph = pickle.load(f)
     print("reference graph loading done")
 
-    precisions = calculate_precision(nbr_matrix, reference_graph)
-    one_read_tp_neighbors_counter = statistic_fp_numbers_of_reads(nbr_matrix, reference_graph)
+    precisions = calculate_precision(new_nbr_matrix, reference_graph)
+    one_read_tp_neighbors_counter = statistic_tp_numbers_of_reads(new_nbr_matrix, reference_graph)
     print("One read TP neighbors counter:", one_read_tp_neighbors_counter)
+    with open(stat_path, 'w') as f:
+        json.dump(
+            {
+                'precisions': precisions,
+                'one_read_tp_neighbors_counter': dict(one_read_tp_neighbors_counter)
+            },
+            f, indent=4
+        )
 
 if __name__ == "__main__":
     main()

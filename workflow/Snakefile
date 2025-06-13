@@ -434,7 +434,7 @@ rule filter_paf:
         filter_paf="data/{biosoft}/{sample}/{region}/{platform}/hash_k21/filter_alignment.paf",
     shell:
         """
-        awk '$10 >= 100 && ($10/$11) >= 0.2' {input.paf} > {output.filter_paf}
+        awk '$10 >= 100 && ($10/$11) >= 0.3' {input.paf} > {output.filter_paf}
         """
         
 rule get_neighbors_paf:
@@ -623,7 +623,7 @@ rule get_neighbors_txt1:
 rule tmp4:
     input:
         expand('data/evaluation64/{region}/hash_k21/{method}_full_stat.tsv',
-        method=['SimHash_Hamming_None_IDF','Exact_Cosine_umap_1000d_IDF'],
+        method=['Exact_Cosine_umap_1000d_IDF'],
         region=['CHM13/chr22_51M/filter3_real_wy','CHM13/chr22_51M/filter3_real_ONT_R10','CHM13/chr22_51M/filter3_real_pb'])
 # rule wgs:
 # 	input:
