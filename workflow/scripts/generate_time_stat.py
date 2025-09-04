@@ -6,7 +6,8 @@ import pickle,os,json
 
 mrss_pattern = r"Maximum resident set size \(kbytes\): (\d+)\n"
 wall_clock_pattern=r"Elapsed \(wall clock\) time \(h:mm:ss or m:ss\): (.+)\n"
-cpu_time_pattern = r"System time \(seconds\): (.+)\n"
+system_time_pattern = r"System time \(seconds\): (.+)\n"
+usr_time_pattern = r"User time \(seconds\): (.+)\n"
 
 def process_overlap_sizes_file(filename: str):
     pattern  = r'data/([^/]+)/([^/]+)/([^/]+)/([^/]+)/([^/]+)/(.+)_time.log'
@@ -23,12 +24,15 @@ def process_overlap_sizes_file(filename: str):
             if re.search(mrss_pattern,line):
                 mrss = re.search(mrss_pattern,line)[1]  
                 all_mrss.append(mrss) 
-            if re.search(cpu_time_pattern,line):
-                cpu_time = re.search(cpu_time_pattern,line)[1]  
-                all_cpu_time.append(cpu_time) 
+            if re.search(system_time_pattern,line):
+                system_time = re.search(system_time_pattern,line)[1] 
+            if re.search(usr_time_pattern,line):
+                usr_time = re.search(usr_time_pattern,line)[1]
             if re.search(wall_clock_pattern,line):
                 clock_time = re.search(wall_clock_pattern,line)[1]  
                 all_clock_time.append(clock_time) 
+        cpu_time = float(system_time) + float(usr_time)
+        all_cpu_time.append(cpu_time) 
         methods.append(method)
         samples.append(sample)
         regions.append(region)

@@ -88,8 +88,8 @@ def main():
     new_metadata_path = f'/home/miaocj/docker_dir/kNN-overlap-finder/data/FEDRANN/{species}/all/filter3_real_{platform}/hash_k21/metadata_{suffix}.tsv'
     nbr_path = f'/home/miaocj/docker_dir/kNN-overlap-finder/data/FEDRANN/{species}/all/filter3_real_{platform}/nbr_matrix_{suffix}.npz'
     stat_path = f'/home/miaocj/docker_dir/kNN-overlap-finder/data/FEDRANN/{species}/all/filter3_real_{platform}/part_stat_{suffix}.tsv'
-    ref_graph_path = f'/home/miaocj/docker_dir/kNN-overlap-finder/data/regional_reads/{species}/all/filter3_real_{platform}/reference_graph.gpickle'
-    metadata_old_path = f'/home/miaocj/docker_dir/kNN-overlap-finder/data/regional_reads/{species}/all/filter3_real_{platform}/metadata.tsv.gz'
+    ref_graph_path = f'/home/miaocj/docker_dir/kNN-overlap-finder/data/regional_reads/CHM13/all/filter3_real_new_wy/reference_graph.gpickle'
+    metadata_old_path = f'/home/miaocj/docker_dir/kNN-overlap-finder/data/regional_reads/CHM13/all/filter3_real_new_wy/metadata.tsv.gz'
 
     if os.path.exists(overlap_txt_path) and os.path.exists(new_metadata_path) and os.path.exists(ref_graph_path) and os.path.exists(metadata_old_path):
         print("All input files exist, proceeding with evaluation.")

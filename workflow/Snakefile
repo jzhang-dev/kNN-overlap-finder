@@ -73,29 +73,6 @@ rule map_real_reads_to_genome:
         minimap2 -x map-ont {input.reference} {input.reads} --secondary=no --MD --eqx -I 10G -k 19 -w 5 -A 3 -B 2 -m 250 -t 60 > {output.all_paf}
         """
 
-# rule filter_all_paf_loose:
-#     input:
-#         all_paf="data/real_reads/{sample}/{platform}/all_aligned.paf",
-#     output:
-#         mid_paf="data/real_reads/{sample}/{platform}/middle_aligned.paf",
-#         filter_paf="data/real_reads/{sample}/{platform}/loose_filter_aligned.paf",
-#     shell:
-#         """
-#         awk '($2 >= 5000) && ($12 >= 30)' {input.all_paf}> {output.mid_paf}
-#         python workflow/scripts/save_max_match_base_for_paf.py {output.mid_paf} {output.filter_paf}
-#         """
-
-# rule extrace_fasta_from_paf_all_loose:
-#     input:
-#         filter_paf="data/real_reads/{sample}/{platform}/loose_filter_aligned.paf",
-#         reads="data/real_reads/{sample}/{platform}/all_reads.fq.gz",
-#     output:
-#         filter_reads="data/regional_reads/{sample}/all/loose_filter_{platform}/reads.fasta.gz",
-#     shell:
-#         """
-#         cut -f1 {input.filter_paf} |sort  |uniq | seqkit grep -f - {input.reads} | seqkit fq2fa - | gzip > {output.filter_reads}
-#         """
-
 rule filter_all_paf:
     input:
         all_paf="data/real_reads/{sample}/{platform}/all_aligned.paf",
@@ -139,6 +116,53 @@ rule extrace_fasta_from_paf_regional:
         cut -f1 {output.paf} |sort  |uniq | seqkit grep -f - {input.reads} | seqkit fq2fa - | gzip > {output.filter_reads}
         """
 
+############ Start : only for test, skip this part ##################
+
+rule fastq_to_fasta:
+    input:
+        fastq="data/real_reads/{sample}/{platform}/all_reads.fq.gz",
+    output:
+        fasta="data/real_reads/{sample}/{platform}/all_reads.fasta.gz",
+    shell:
+        """
+        seqkit fq2fa {input.fastq} | gzip > {output.fasta}
+        """
+        
+rule keep_best_align:
+    input:
+        paf="data/real_reads/{sample}/{platform}/all_aligned.paf",
+    output:
+        best_paf="data/real_reads/{sample}/{platform}/best_all_aligned.paf",
+    shell:
+        """
+        python workflow/scripts/save_max_match_base_for_paf.py {input.paf} {output.best_paf}
+        """
+
+rule read_info_for_all1:
+    input:
+        paf="data/real_reads/{sample}/{platform}/best_all_aligned.paf",
+    output:
+        tsv="data/real_reads/{sample}/{platform}/all_read_info.tsv.gz",
+    script:
+        "scripts/get_real_read_info_for_chrs1.smk.py"
+
+rule get_metadata1:
+    input:
+        fasta="data/real_reads/{sample}/{platform}/all_reads.fasta.gz",
+        tsv="data/real_reads/{sample}/{platform}/all_read_info.tsv.gz",
+    output:
+        metadata="data/regional_reads/{sample}/{region}/{platform}/metadata.tsv.gz",
+    wildcard_constraints:
+        sample=r'(CHM13|rice|ara|droso|caenor)'
+    conda:
+        "envs/default.yaml"
+    shell:
+        """
+        python /home/miaocj/docker_dir/kNN-overlap-finder/workflow/scripts/get_metadata.smk.py {input.fasta} {input.tsv} {output.metadata}
+        """
+############ End : only for test, skip this part ##################
+
+
 rule read_info_for_all:
     input:
         paf="data/real_reads/{sample}/{platform}/filter_aligned.paf",
@@ -162,23 +186,23 @@ rule get_metadata:
         """
         python /home/miaocj/docker_dir/kNN-overlap-finder/workflow/scripts/get_metadata.smk.py {input.fasta} {input.tsv} {output.metadata}
         """
-## Encode reads. The reads.fasta include fasta belong to this reigion, so this script fits for simulate and real reads.
-rule kmer_encoding:
-    input:
-        fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
-    output:
-        npz="data/feature_matrix/{sample}/{region}/{platform}/kmer_k{k}/feature_matrix.npz",
-        json="data/feature_matrix/{sample}/{region}/{platform}/kmer_k{k}/read_features.json.gz",
-    params:
-        sample_fraction=0.1,
-        min_multiplicity=2,
-        seed=562104830,
-    wildcard_constraints:
-        k=r"\d+",
-    conda:
-        "envs/default.yaml"
-    script:
-        "scripts/kmer_encoding_for_sim.smk.py"
+# ## Encode reads. The reads.fasta include fasta belong to this reigion, so this script fits for simulate and real reads.
+# rule kmer_encoding:
+#     input:
+#         fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
+#     output:
+#         npz="data/feature_matrix/{sample}/{region}/{platform}/kmer_k{k}/feature_matrix.npz",
+#         json="data/feature_matrix/{sample}/{region}/{platform}/kmer_k{k}/read_features.json.gz",
+#     params:
+#         sample_fraction=0.1,
+#         min_multiplicity=2,
+#         seed=562104830,
+#     wildcard_constraints:
+#         k=r"\d+",
+#     conda:
+#         "envs/default.yaml"
+#     script:
+#         "scripts/kmer_encoding_for_sim.smk.py"
 
 rule hash_kmer_encoding:
     input:
@@ -215,18 +239,18 @@ rule minimizer_encoding:
         "scripts/minimizer_encoding.smk.py"
 
 
-rule generate_reference_graph:
-    input:
-        metadata="data/regional_reads/{sample}/{region}/{platform}/metadata.tsv.gz",
-    output:
-        ref_graph="data/regional_reads/{sample}/{region}/{platform}/reference_graph.gpickle",
-    wildcard_constraints:
-        region=r'(HLA|IGK|chr22_51M|chr1_248M)',  # 排除"all"
-        sample=r'(CHM13|rice|ara|caenor|droso)'
-    conda:
-        "envs/default.yaml"
-    script:
-        "scripts/generate_reference_graph.smk.py"
+# rule generate_reference_graph:
+#     input:
+#         metadata="data/regional_reads/{sample}/{region}/{platform}/metadata.tsv.gz",
+#     output:
+#         ref_graph="data/regional_reads/{sample}/{region}/{platform}/reference_graph.gpickle",
+#     wildcard_constraints:
+#         region=r'(HLA|IGK|chr22_51M|chr1_248M)',  # 排除"all"
+#         sample=r'(CHM13|rice|ara|caenor|droso)'
+#     conda:
+#         "envs/default.yaml"
+#     script:
+#         "scripts/generate_reference_graph.smk.py"
 
 rule generate_reference_graph_for_chrs:
     input:
@@ -241,62 +265,37 @@ rule generate_reference_graph_for_chrs:
 
 #--------------------up for real data--------------------------------------------------------
 
-rule run_minimap2_ava:
-    input:
-        fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
-    output:
-        paf_minimap2="data/minimap2/{sample}/{region}/{platform}/hash_k21/alignment.paf",
-        minimap2_log="data/evaluation64/{sample}/{region}/{platform}/hash_k21/minimap2_time.log",
-    params:
-        preset="ava-ont",
-    conda:
-        "envs/minimap2.yaml"
-    threads: 64
-    shell:
-        """
-        /usr/bin/time -v -o {output.minimap2_log} \
-        minimap2 -x {params.preset} -t {threads} {input.fasta} {input.fasta} > {output.paf_minimap2}
-        """
+# rule run_minimap2_ava:
+#     input:
+#         fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
+#     output:
+#         paf_minimap2="data/minimap2/{sample}/{region}/{platform}/hash_k21/alignment.paf",
+#         minimap2_log="data/evaluation64/{sample}/{region}/{platform}/hash_k21/minimap2_time.log",
+#     params:
+#         preset="ava-ont",
+#     conda:
+#         "envs/minimap2.yaml"
+#     threads: 64
+#     shell:
+#         """
+#         /usr/bin/time -v -o {output.minimap2_log} \
+#         minimap2 -x {params.preset} -t {threads} {input.fasta} {input.fasta} > {output.paf_minimap2}
+#         """
 
-rule run_daligner:
-    input:
-        fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
-    output:
-        maf="data/daligner/{sample}/{region}/{platform}/alignment.maf.gz",
-    params:
-        k = 16,
-        average_correlation=".9",
-        min_alignment_length=1000,
-        min_alignment_score=50,
-    threads: 8
-    conda:
-        "envs/daligner.yaml"
-    shell: 
-        """
-        daligner \
-            -k{params.k} \
-            -e{params.average_correlation} \
-            -l{params.min_alignment_length} \
-            -s{params.min_alignment_score} \
-            -T{threads} \
-            -v \
-            {input.fasta} {input.fasta} \
-        | gzip -c > {output.maf}
-        """
 
 ## specific parameters refer canu
 rule run_mhap:
     input:
         fasta="data/regional_reads/{sample}/{region}/{platform}/reads.fasta.gz",
     output:
-        txt=temp("data/MHAP/{sample}/{region}/{platform}/hash_k21/alignment.txt"),
-        txt_gz="data/MHAP/{sample}/{region}/{platform}/hash_k21/alignment.txt.gz",
+        txt="data/MHAP/{sample}/{region}/{platform}/hash_k21/alignment.txt",
         log="data/evaluation64/{sample}/{region}/{platform}/hash_k21/MHAP_time.log",
     threads:64
     shell:
         """
         /usr/bin/time -v -o {output.log} \
-        java  -Xms500g -XX:ParallelGCThreads={threads} -server -jar ~/docker_dir/biosoft/mhap-2.1.1.jar \
+        java -Xms200g -Xmx900g -XX:+UseParallelGC -XX:ParallelGCThreads={threads} -server \
+        -jar ~/docker_dir/biosoft/mhap-2.1.1.jar \
         -s {input.fasta}\
         --repeat-weight 0.9 --repeat-idf-scale 10 -k 16 \
         --store-full-id \
@@ -309,7 +308,6 @@ rule run_mhap:
         --min-olap-length 500 \
         --num-threads {threads} \
         > {output.txt}
-        gzip -c {output.txt} > {output.txt_gz}
         """
 
 rule run_xread:
@@ -318,7 +316,7 @@ rule run_xread:
     output:
         paf="data/xRead/{sample}/{region}/{platform}/hash_k21/alignment.paf",
         log="data/evaluation64/{sample}/{region}/{platform}/hash_k21/xRead_time.log",
-    threads:64
+    threads:24
     params:
         xread_params=lambda wildcards: 
         "-k 19 -w 40 -p 2 " if wildcards.platform == "filter3_real_pb" 
@@ -326,7 +324,7 @@ rule run_xread:
     shell:
         """
         /usr/bin/time -v -o {output.log} \
-        ~/docker_dir/biosoft/xRead-v1.0.0/xRead {input.fasta} {params.xread_params} -b 30 -m 30 -n 20 -x 5.0 -t {threads} -M {threads} \
+        ~/docker_dir/biosoft/xRead-v1.0.0/xRead {input.fasta} {params.xread_params} -M 24 -b 30 -m 30 -n 20 -x 5.0 -t {threads}\
         > {output.paf}
         """
         ### -x 5.0 suitable for low depth data, -b -m -n set loose filter standard
@@ -431,12 +429,57 @@ rule filter_paf:
     input:
         paf="data/{biosoft}/{sample}/{region}/{platform}/hash_k21/alignment.paf",
     output:
+        filter_paf="data/{biosoft}/{sample}/{region}/{platform}/hash_k21/filter_alignment.paf.gz",
+    shell:
+        """
+        awk '$10 >= 50 && ($10/$11) >= 0.1' {input.paf} | gzip -c > {output.filter_paf}
+        """
+
+rule filter_paf_nogzip:
+    input:
+        paf="data/{biosoft}/{sample}/{region}/{platform}/hash_k21/alignment.paf",
+    output:
         filter_paf="data/{biosoft}/{sample}/{region}/{platform}/hash_k21/filter_alignment.paf",
     shell:
         """
-        awk '$10 >= 100 && ($10/$11) >= 0.3' {input.paf} > {output.filter_paf}
+        awk '$10 >= 50 && ($10/$11) >= 0.1' {input.paf} > {output.filter_paf}
         """
-        
+                
+rule get_neighbors_xread:
+    input:
+        metadata="data/regional_reads/{sample}/{region}/{platform}/metadata.tsv.gz",
+        paf="data/xRead/{sample}/{region}/{platform}/hash_k21/alignment.paf",
+    output:
+        nbr_indice="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/xRead_nbr_matrix.npz",
+        time="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/xRead_nn_time_tmp.json",
+    threads: 1
+    wildcard_constraints:
+        method=r"[^/]+",
+    conda:
+        "envs/evaluate.yaml"
+    shell:
+        """
+        python workflow/scripts/get_neighbors.smk.py --input {input.metadata} {input.paf} \
+        --output {output.nbr_indice} {output.time} --method xRead --threads {threads}
+        """
+# rule get_neighbors_minimap2:
+#     input:
+#         metadata="data/regional_reads/{sample}/{region}/{platform}/metadata.tsv.gz",
+#         paf="data/{biosoft}/{sample}/{region}/{platform}/{encoding}/filter_alignment.paf",
+#     output:
+#         nbr_indice="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{biosoft}_nbr_matrix.npz",
+#         time="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{biosoft}_nn_time_tmp.json",
+#     threads: 1
+#     wildcard_constraints:
+#         method=r"[^/]+",
+#         biosoft=r'(minimap2)',
+#     conda:
+#         "envs/evaluate.yaml"
+#     shell:
+#         """
+#         python workflow/scripts/get_neighbors.smk.py --input {input.metadata} {input.paf} \
+#         --output {output.nbr_indice} {output.time} --method {wildcards.biosoft} --threads {threads}
+#         """
 rule get_neighbors_paf:
     input:
         metadata="data/regional_reads/{sample}/{region}/{platform}/metadata.tsv.gz",
@@ -447,7 +490,7 @@ rule get_neighbors_paf:
     threads: 1
     wildcard_constraints:
         method=r"[^/]+",
-        biosoft=r'(minimap2|xRead|BLEND)',
+        biosoft=r'(BLEND)',
     conda:
         "envs/evaluate.yaml"
     shell:
@@ -459,7 +502,7 @@ rule get_neighbors_paf:
 rule get_neighbors_txt:
     input:
         metadata="data/regional_reads/{sample}/{region}/{platform}/metadata.tsv.gz",
-        paf_minimap2="data/{biosoft}/{sample}/{region}/{platform}/{encoding}/alignment.txt.gz",
+        paf_minimap2="data/{biosoft}/{sample}/{region}/{platform}/{encoding}/alignment.txt",
     output:
         nbr_indice="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{biosoft}_nbr_matrix.npz",
         time="data/{evaluation_threads}/{sample}/{region}/{platform}/{encoding}/{biosoft}_nn_time_tmp.json",
@@ -620,6 +663,8 @@ rule get_neighbors_txt1:
         --output {output.nbr_indice} {output.time} --method FEDRANN --threads {threads}
         """
 # ----------------------------------------------------------------------------------------------------
+
+    
 rule tmp4:
     input:
         expand('data/evaluation64/{region}/hash_k21/{method}_full_stat.tsv',
@@ -665,12 +710,17 @@ rule minimap2_for_all:
 
 rule test_biosoft:
     input:
-        "data/xRead/ara/all/filter3_real_ONT/kmer_k21/filter_alignment.paf.gz",
-        "data/minimap2/ara/all/filter3_real_ONT/kmer_k21/filter_alignment.paf.gz",
-        "data/BLEND/ara/all/filter3_real_ONT/kmer_k21/filter_alignment.paf.gz",
-        "data/MECAT2/ara/all/filter3_real_ONT/kmer_k21/alignment.txt.gz",
-        "data/MHAP/ara/all/filter3_real_ONT/kmer_k21/alignment.txt.gz",
-        "data/wtdbg2/ara/all/filter3_real_ONT/kmer_k21/alignment.txt.gz"
+        expand("data/evaluation64/CHM13/all/filter3_real_{platform}/hash_k21/{biosoft}_{target}",
+        platform=['new_wy'],
+        biosoft=['MECAT2'],
+        target=['time_rss.tsv','part_stat.tsv'])
+
+rule test_biosoft_new_wy:
+    input:
+        expand("data/evaluation64/CHM13/all/filter3_real_{platform}/hash_k21/{biosoft}_{target}",
+        platform=['new_wy'],
+        biosoft=['BLEND'],
+        target=['time_rss.tsv','part_stat.tsv'])
 
 rule generate_graph:
     input:
@@ -687,22 +737,22 @@ rule test_biosoft2:
 rule test_biosoft3:
     input:
         expand("data/evaluation64/CHM13/all/filter3_real_{platform}/hash_k21/{biosoft}_{target}",
-        platform=['pb','wy','ONT_R10'],
-        biosoft=['xRead','BLEND','MECAT2','wtdbg2','minimap2'],
+        platform=['pb','ONT_R10'],
+        biosoft=['MHAP'],
         target=['part_stat.tsv'])
 
 rule test_biosoft_ont:
     input:
         expand("data/evaluation64/CHM13/all/{platform}/hash_k21/{biosoft}_{target}",
-        platform=['filter3_real_ONT_R10'],
-        biosoft=['xRead','minimap2','BLEND','wtdbg2'], #'MECAT2','MHAP'
-        target=['time_rss.tsv','full_stat.tsv'])
+        platform=['filter3_real_new_wy'],
+        biosoft=['BLEND','wtdbg2','MECAT2'], #,'MHAP'
+        target=['full_stat.tsv',])
 
 rule test_biosoft_pb:
     input:
         expand("data/evaluation64/CHM13/all/{platform}/hash_k21/{biosoft}_{target}",
         platform=['filter3_real_pb'],
-        biosoft=['xRead','minimap2','BLEND','wtdbg2','MECAT2'], #'MHAP',
+        biosoft=['xRead','BLEND','wtdbg2','MECAT2','FEDRANN_0611'], #'MHAP',
         target=['time_rss.tsv','full_stat.tsv'])
 
 rule simulate_chr1:
@@ -712,34 +762,77 @@ rule simulate_chr1:
 
 rule rpf:
     input:
-        expand("data/evaluation64/{region}/hash_k21/ann_RPForest_config1/RPForest_Cosine_SparseRP_1000d_IDF_full_stat.tsv",
-        region=['CHM13/IGK/filter3_real_wy','CHM13/IGK/filter3_real_ONT_R10','CHM13/IGK/filter3_real_pb',
-        'CHM13/HLA/filter3_real_wy','CHM13/HLA/filter3_real_ONT_R10','CHM13/HLA/filter3_real_pb',
-        'droso/all/filter3_real_ONT','caenor/all/filter3_real_ONT'])
+        expand("data/evaluation64/{region}/hash_k11/ann_RPForest_config1/RPForest_Cosine_SparseRP_1000d_IDF_full_stat.tsv",
+        region=['CHM13/IGK/filter3_real_new_wy',
+        'CHM13/HLA/filter3_real_new_wy',
+        'CHM13/chr22_51M/filter3_real_new_wy'])
 
 rule all_test0:
     input:
-        expand('data/evaluation64/{region}/hash_k21/{method}_full_stat.tsv',
-        method=['MHAP','minimap2','Exact_Cosine_None_IDF'],
-        region=['CHM13/IGK/filter3_real_wy','CHM13/IGK/filter3_real_ONT_R10','CHM13/IGK/filter3_real_pb',
-        'CHM13/HLA/filter3_real_wy','CHM13/HLA/filter3_real_ONT_R10','CHM13/HLA/filter3_real_pb',
-        'CHM13/chr22_51M/filter3_real_wy','CHM13/chr22_51M/filter3_real_ONT_R10','CHM13/chr22_51M/filter3_real_pb',
-        'droso/all/filter3_real_ONT','caenor/all/filter3_real_ONT'])
+        expand('data/evaluation64/{region}/{method}_full_stat.tsv',
+        method=['hash_k21/MHAP','hash_k21/minimap2','hash_k11/Exact_Cosine_None_IDF'],
+        region=['CHM13/IGK/filter3_real_new_wy',
+        'CHM13/HLA/filter3_real_new_wy',
+        'CHM13/chr22_51M/filter3_real_new_wy'])
 
 rule supple:
     input:
         expand("data/evaluation64/{region}/hash_k21/Exact_{distance}_None_{preprocess}_full_stat.tsv",
-        region=['CHM13/IGK/filter3_real_wy','CHM13/IGK/filter3_real_ONT_R10','CHM13/IGK/filter3_real_pb',
-        'CHM13/HLA/filter3_real_wy','CHM13/HLA/filter3_real_ONT_R10','CHM13/HLA/filter3_real_pb',
-        'CHM13/chr22_51M/filter3_real_wy','CHM13/chr22_51M/filter3_real_ONT_R10','CHM13/chr22_51M/filter3_real_pb'],
+        region=['CHM13/IGK/filter3_real_new_wy','CHM13/IGK/filter3_real_ONT_R10','CHM13/IGK/filter3_real_pb',
+        'CHM13/HLA/filter3_real_new_wy','CHM13/HLA/filter3_real_ONT_R10','CHM13/HLA/filter3_real_pb',
+        'CHM13/chr22_51M/filter3_real_new_wy','CHM13/chr22_51M/filter3_real_ONT_R10','CHM13/chr22_51M/filter3_real_pb'],
         distance=['Cosine','Euclidean'],
         preprocess=['TF','IDF','TF-IDF','binary','count'])
+
+rule supple2:
+    input:
+        expand("data/evaluation64/{region}/hash_k11/Exact_{distance}_None_{preprocess}_full_stat.tsv",
+        region=['CHM13/IGK/filter3_real_new_wy',
+        'CHM13/HLA/filter3_real_new_wy',
+        'CHM13/chr22_51M/filter3_real_new_wy',],
+        distance=['Cosine','Euclidean'],
+        preprocess=['TF','IDF','TF-IDF','binary','count'])
+
+rule test222:
+    input:
+        expand("data/evaluation64/{region}/filter3_real_pb/kmer_k21/{method}_full_stat.tsv",
+        method=['ann_NNDescent_config3/NNDescent_Cosine_SparseRP_1000d_IDF',
+                'ann_HNSW_config1/HNSW_Cosine_SparseRP_1000d_IDF',
+                'ann_PQ_config2/PQ_Cosine_SparseRP_1000d_IDF',
+                'ann_IVFPQ_config5/IVFPQ_Cosine_SparseRP_1000d_IDF'],
+        region=['CHM13/IGK','CHM13/HLA','CHM13/chr22_51M'],)
+
+rule test2222:
+    input:
+        expand("data/evaluation64/{region}/filter3_real_ONT_R10/hash_k11/Exact_Cosine_{dim_method}_1000d_IDF_full_stat.tsv",
+        region=['CHM13/IGK','CHM13/HLA'],
+        dim_method=['umap']), ## PCA scBimap 在wyHLA 无法运行成功
+rule new_wy:
+    input:
+        expand("data/evaluation64/{region}/filter3_real_new_wy/hash_k11/Exact_Cosine_{dim_method}_1000d_IDF_full_stat.tsv",
+        region=['CHM13/IGK','CHM13/HLA'],
+        dim_method=['Spectural','GaussianRP','SparseRP','umap','PCA','scBiMap']), ## PCA scBimap 在wyHLA 无法运行成功
+        expand("data/evaluation64/{region}/filter3_real_new_wy/hash_k11/{method}_full_stat.tsv",
+        region=['CHM13/IGK','CHM13/HLA'],
+        method=['SimHash_Hamming_None_IDF']),
+        expand("data/evaluation64/{region}/filter3_real_new_wy/hash_k11/Exact_{distance}_{dim_method}_1000d_IDF_full_stat.tsv",
+        region=['CHM13/IGK','CHM13/HLA','CHM13/chr22_51M'],
+        distance=['Cosine','Euclidean'],dim_method=['GaussianRP','SparseRP']),
+        expand("data/evaluation64/{region}/filter3_real_new_wy/hash_k11/Exact_Cosine_SparseRP_{dim}d_IDF_full_stat.tsv",
+        region=['CHM13/IGK','CHM13/HLA','CHM13/chr22_51M'],
+        dim=[100,300,500,1000,2000,3000]),
+        expand("data/evaluation64/{region}/filter3_real_new_wy/hash_k11/{method}_full_stat.tsv",
+        method=['ann_NNDescent_config3/NNDescent_Cosine_SparseRP_1000d_IDF',
+                'ann_HNSW_config1/HNSW_Cosine_SparseRP_1000d_IDF',
+                'ann_PQ_config2/PQ_Cosine_SparseRP_1000d_IDF',
+                'ann_IVFPQ_config5/IVFPQ_Cosine_SparseRP_1000d_IDF'],
+        region=['CHM13/IGK','CHM13/HLA','CHM13/chr22_51M'],)
 
 rule all_test1:
     input:
         expand("data/evaluation64/{region}/filter3_real_{platform}/hash_k21/Exact_Cosine_{dim_method}_1000d_IDF_full_stat.tsv",
         region=['CHM13/IGK','CHM13/HLA'],
-        platform=['wy','pb','ONT'],
+        platform=['new_wy','pb','ONT'],
         dim_method=['Spectural','GaussianRP','SparseRP','umap','PCA','scBiMap']), ## PCA scBimap 在wyHLA 无法运行成功
         expand("data/evaluation64/{region}/hash_k21/{method}_full_stat.tsv",
         region=['CHM13/IGK/filter3_real_wy','CHM13/IGK/filter3_real_ONT_R10','CHM13/IGK/filter3_real_pb',
@@ -939,9 +1032,9 @@ rule chr1_test:
 
 rule simulate_data:
     input:
-        expand("data/evaluation/{sample}/pbsim_ONT_{accuracy}_{length_kb}k_{depth}dep/kmer_k16/Exact_Cosine_None_{preprocess}_full_stat.tsv",
-        sample=['CHM13/IGK','rice/chr1_43M'],
-        accuracy=['99','97','95','93','91'],
+        expand("data/evaluation64/{sample}/pbsim_ONT_{accuracy}_{length_kb}k_{depth}dep/kmer_k11/Exact_Cosine_None_{preprocess}_full_stat.tsv",
+        sample=['CHM13/IGK'],
+        accuracy=['99','97','95','93','91'], 
         length_kb=[10,15,20,25,30],
         depth=[10,30,50],
         preprocess=['IDF'])
@@ -1007,6 +1100,7 @@ rule test_rpforest:
 #         accuracy=r"\d+",
 #         length_kb=r"\d+",
 #         depth=r"\d+",
+#     threads: 16
 #     params:
 #         accuracy=lambda wildcards: float(wildcards["accuracy"]) / 100,
 #         length_mean=lambda wildcards: int(wildcards["length_kb"]) * 1000,
@@ -1034,7 +1128,33 @@ rule test_rpforest:
 #         gzip -c {output.folder}/output_0001.maf > {output.maf}
 #         rm -rf {output.folder}/output*
 #         """
+# rule get_pbsim_ONT_metadata:
+#     input:
+#         maf="data/regional_reads/{sample}/{region}/{platform}/alignment.maf.gz",
+#     output:
+#         tsv="data/regional_reads/{sample}/{region}/{platform}/read_info.tsv.gz",
+#     wildcard_constraints:
+#         platform=r"pbsim_ONT.+",
+#     conda:
+#         "envs/default.yaml"
+#     script:
+#         "scripts/get_pbsim_read_info_ont.smk.py"
 
+
+rule get_metadata_pbsim:
+    input:
+        fasta="data/regional_reads/{sample}/{region}/pbsim_ONT_{platform}/reads.fasta.gz",
+        tsv="data/regional_reads/{sample}/{region}/pbsim_ONT_{platform}/read_info.tsv.gz",
+    output:
+        metadata="data/regional_reads/{sample}/{region}/pbsim_ONT_{platform}/metadata.tsv.gz",
+    wildcard_constraints:
+        sample=r'(CHM13|rice|ara|droso|caenor)'
+    conda:
+        "envs/default.yaml"
+    shell:
+        """
+        python /home/miaocj/docker_dir/kNN-overlap-finder/workflow/scripts/get_metadata.smk.py {input.fasta} {input.tsv} {output.metadata}
+        """
 # rule run_pbsim3_meta_ont:
 #     input:
 #         reference="data/metagenome_reference/GCR.fa.split/GCR.part_{num}.fa",
@@ -1124,17 +1244,7 @@ rule test_rpforest:
 #         "scripts/get_perfect_read_info.smk.py"
 
 
-# rule get_pbsim_ONT_metadata:
-#     input:
-#         maf="data/regional_reads/{sample}/{region}/{platform}/alignment.maf.gz",
-#     output:
-#         tsv="data/regional_reads/{sample}/{region}/{platform}/read_info.tsv.gz",
-#     wildcard_constraints:
-#         platform=r"pbsim_ONT.+",
-#     conda:
-#         "envs/default.yaml"
-#     script:
-#         "scripts/get_pbsim_read_info_ont.smk.py"
+
 
 # rule get_pbsim_pb_ccs_metadata:
 #     input:

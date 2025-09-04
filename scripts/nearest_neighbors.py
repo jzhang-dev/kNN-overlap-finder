@@ -14,6 +14,7 @@ import sklearn.neighbors
 import hnswlib
 import pynear
 import faiss
+import time
 import pynndescent
 from data_io import parse_paf_file, get_sibling_id
 from accelerate import open_gzipped
@@ -298,14 +299,18 @@ class SimHash(_NearestNeighbors):
     ) -> np.ndarray:
         assert data.shape is not None
         kmer_num = data.shape[1]
+        time1 = time.time()
         hash_table = self._get_hash_table(kmer_num, repeats=repeats, seed=seed)
         simhash = self.get_simhash(data, hash_table)
+        time2 = time.time()
+        print(f"SimHash generation time: {time2 - time1:.2f} seconds")
         vptree = pynear.VPTreeBinaryIndex()
         vptree.set(simhash)
         vptree_indices, vptree_distances = vptree.searchKNN(simhash, n_neighbors + 1)
         nbr_indices = np.array(vptree_indices)[:, :-1][:, ::-1]
         nbr_distance = np.array(vptree_distances)[:, :-1][:, ::-1]
         new_matrix = process_nbr_matrix(nbr_indices,nbr_distance,n_neighbors)
+        print(f"SimHash neighbor search time: {time.time() - time2:.2f} seconds")
         return new_matrix
     
 class PAFNearestNeighbors(_NearestNeighbors):
