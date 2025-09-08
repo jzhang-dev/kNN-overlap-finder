@@ -10,11 +10,7 @@ from Bio import SeqIO
 import scipy.sparse as sp
 import numpy as np
 import pandas as pd
-import sys
-from pathlib import Path
-import re
-sys.path.append("scripts")
-from accelerate import open_gzipped,parse_fasta
+
 
 def init_reverse_complement():
     TRANSLATION_TABLE = str.maketrans("ACTGactg", "TGACtgac")
@@ -35,46 +31,23 @@ def init_reverse_complement():
 reverse_complement = init_reverse_complement()
 
 
-dir_path = Path("/home/miaocj/docker_dir/data/GTDB_download/release220/skani/database/")
-pattern=r'GC\D_\d+\.\d'
-id_dict = collections.defaultdict() ##{read_id1,GCA0005454}
-for file in dir_path.rglob("*"):
-    if file.is_file():
-        ref_id=re.search(pattern,str(file))[0]
-        if ref_id[:3] == 'GCA':
-            ref_id = 'GB_'+ref_id
-        else:
-            ref_id = 'RS_'+ref_id
-        with gzip.open(file, "rt") as handle:
-            for record in SeqIO.parse(handle, "fasta"):
-                id_dict[record.id] = ref_id
-
-
-def load_reads(
-    fasta_path: str,
-    paf_path: str):
+def load_reads(fasta_path: str):
     read_sequences = []
     read_names = []
     read_orientations = []
 
-    with open_gzipped(paf_path, "rt") as file:
-        reads_aligned = []
-        for row in file:  
-            columns = row.strip().split('\t') 
-            reads_aligned.append(columns[0])
-
- # Open gzipped file in text mode
-    for record in parse_fasta(fasta_path):
-        if record[0] in reads_aligned:
-            seq = record[1]
+    with gzip.open(fasta_path, "rt") as handle:  # Open gzipped file in text mode
+        for record in SeqIO.parse(handle, "fasta"):
+            seq = str(record.seq)
             read_sequences.append(seq)
-            read_names.append(record[0])
+            read_names.append(record.id)
             read_orientations.append("+")
 
             # Include reverse complement
             read_sequences.append(reverse_complement(seq))
-            read_names.append(record[0])
+            read_names.append(record.id)
             read_orientations.append("-")
+
     return read_names, read_orientations, read_sequences
 
 
@@ -102,7 +75,6 @@ def build_kmer_index(
         for x, count in kmer_counter.items()
         if count >= min_multiplicity and rng.random() <= sample_fraction
     )
-    vocabulary |= set(reverse_complement(x) for x in vocabulary)
     kmer_indices = {kmer: i for i, kmer in enumerate(vocabulary)}
     return kmer_indices
 
@@ -126,11 +98,13 @@ def build_feature_matrix(
             features_i.append(j)
 
         read_features.append(features_i)
+
         kmer_counts = collections.Counter(features_i)
         for j, count in kmer_counts.items():
             row_ind.append(i)
             col_ind.append(j)
             data.append(count)
+
     feature_matrix = sp.csr_matrix(
         (data, (row_ind, col_ind)), shape=(len(read_sequences), len(kmer_indices))
     )
@@ -139,8 +113,6 @@ def build_feature_matrix(
 
 def encode_reads(
     fasta_path: str,
-    paf_path:str,
-    info_path: str,
     k,
     *,
     sample_fraction: float,
@@ -151,11 +123,8 @@ def encode_reads(
     """
     Encodes sequencing reads from a gzipped FASTA file as a sparse matrix.
     """
-    # Load reads info
-    info_df = pd.read_table(info_path).set_index("read_name")
-
     # Load reads
-    read_names, read_orientations, read_sequences = load_reads(fasta_path=fasta_path,paf_path=paf_path)
+    read_names, read_orientations, read_sequences = load_reads(fasta_path=fasta_path)
 
     # Build vocabulary
     kmer_indices = build_kmer_index(
@@ -175,50 +144,22 @@ def encode_reads(
         processes=processes,
     )
 
-    # Build metadata
-    def flip(strand):
-        return {"+": "-", "-": "+"}[strand]
-
-    rows = []
-    for i in range(len(read_sequences)):
-        read_name = read_names[i]
-        read_orientation = read_orientations[i]
-        reference_strand = info_df.at[read_name, "reference_strand"]
-        if read_orientation == "-":
-            reference_strand = flip(reference_strand)
-        rows.append(
-            dict(
-                read_id=i,
-                read_name=read_name,
-                read_orientation=read_orientation,
-                read_length=info_df.at[read_name, "read_length"],
-                reference_strand=reference_strand,
-                reference_start=info_df.at[read_name, "reference_start"],
-                reference_end=info_df.at[read_name, "reference_end"],
-            )
-        )
-    metadata = pd.DataFrame(rows)
-
-    return feature_matrix, read_features, metadata
-
+    return feature_matrix, read_features
 
 def main(snakemake: "SnakemakeContext"):
+
     input_fasta_file = snakemake.input["fasta"]
-    input_tsv_file = snakemake.input["tsv"]
-    paf_file = snakemake.input["paf"]
+
     output_npz_file = snakemake.output["npz"]
     output_json_file = snakemake.output["json"]
-    output_tsv_file = snakemake.output["tsv"]
     k = int(snakemake.wildcards["k"])
     sample_fraction = snakemake.params["sample_fraction"]
     min_multiplicity = snakemake.params["min_multiplicity"]
     seed = snakemake.params["seed"]
     threads = snakemake.threads
 
-    feature_matrix, read_features, metadata = encode_reads(
+    feature_matrix, read_features = encode_reads(
         fasta_path=input_fasta_file,
-        paf_path=paf_file,
-        info_path=input_tsv_file,
         k=k,
         sample_fraction=sample_fraction,
         min_multiplicity=min_multiplicity,
@@ -226,10 +167,8 @@ def main(snakemake: "SnakemakeContext"):
         processes=threads,
     )
     sp.save_npz(output_npz_file, feature_matrix)
-    with open_gzipped(output_json_file, "wt") as f:
+    with gzip.open(output_json_file, "wt") as f:
         json.dump(read_features, f)
-    metadata.to_csv(output_tsv_file, index=False, sep="\t")
-
 
 if __name__ == "__main__":
     main(snakemake)

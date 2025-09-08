@@ -6,16 +6,20 @@ from typing import Type, Sequence, Mapping, Any, Collection, MutableMapping
 from dataclasses import dataclass
 import numpy as np
 from numpy import ndarray
-import networkx as nx
 from intervaltree import Interval, IntervalTree
+import pickle
 
 from data_io import get_sibling_id, get_fwd_id, parse_paf_file
 from align import _PairwiseAligner, run_multiprocess_alignment, AlignmentResult
-
+import sharedmem
+from collections import defaultdict
+import networkx as nx
+# from bx.intervals.intersection import Intersecter
+# from tqdm import tqdm
 
 @dataclass
 class GenomicInterval:
-    chromosome: str
+    chromosome: set
     start: int
     end: int
 
@@ -30,6 +34,13 @@ def get_interval_trees(
             tree.addi(intv.start, intv.end, read)
     return tree_dict
 
+# def get_interval_trees_bx(
+#         read_intervals: Mapping[int, Collection[GenomicInterval]]):
+#     tree_dict = defaultdict(Intersecter)
+#     for read, intervals in read_intervals.items():
+#         for intv in intervals:
+#             tree_dict[intv.chromosome].add_interval(intv.start, intv.end, read)
+#     return tree_dict
 
 def get_overlap_candidates(
     neighbor_indices: ndarray,
@@ -41,8 +52,8 @@ def get_overlap_candidates(
     _read_ids = np.array(read_ids)
     overlap_candidates = []
     for i1, row in enumerate(neighbor_indices):
-        k1 = _read_ids[i1]
-        row = row[(row >= 0) & (row != i1)]
+        k1 = _read_ids[row[0]]
+        row = row[(row >= 0) & (row != row[0])]
         for neighbor_order, i2 in enumerate(row[:n_neighbors]):
             overlap_candidates.append((k1, _read_ids[i2], {"neighbor_order": neighbor_order}))
     return overlap_candidates
@@ -120,51 +131,44 @@ class OverlapGraph(nx.Graph):
                     continue
                 graph.add_edge(node, nbr_node, alignment_score=score)
         return graph
-
+    
     @classmethod
-    def from_intervals(cls, read_intervals: Mapping[int, Collection[GenomicInterval]]):
-        # Find all overlaps
+    def from_intervals(cls, read_intervals: Mapping[int, Collection[GenomicInterval]], num_processes: int = 12):
+        # 1. 构建 Interval Trees（单线程）
         trees = get_interval_trees(read_intervals=read_intervals)
         graph = cls()
-        contained_reads = set()
-        for read_0, intervals in read_intervals.items():
-            parent_reads = set()
-            for intv in intervals:
-                tree = trees[intv.chromosome]
-                start_0 = intv.start
-                end_0 = intv.end
-                for intv_1 in tree.overlap(start_0, end_0):
-                    read_1 = intv_1.data
-                    if read_1 == read_0:
-                        continue
-                    start_1, end_1 = intv_1.begin, intv_1.end
-                    if start_1 < start_0 and end_1 > end_0:
-                        parent_reads.add(read_1)
-                    if graph.has_edge(read_0, read_1):
-                        continue
-                    overlap_size = max(0, min(end_0, end_1) - max(start_0, start_1))
-                    left_overhang_size = abs(start_0 - start_1)
-                    left_overhang_node = read_0 if start_0 <= start_1 else read_1
-                    right_overhang_size = abs(end_0 - end_1)
-                    right_overhang_node = read_0 if end_0 >= end_1 else read_1
-                    graph.add_edge(
-                        read_0,
-                        read_1,
-                        overlap_size=overlap_size,
-                        left_overhang_size=left_overhang_size,
-                        left_overhang_node=left_overhang_node,
-                        right_overhang_size=right_overhang_size,
-                        right_overhang_node=right_overhang_node,
-                        redundant=True,
-                    )
-            if len(parent_reads) == 1:
-                contained_reads.add(read_0)
-        print('1')
-        # Label contained reads
-        nx.set_node_attributes(graph, "contained", False)
-        for read in contained_reads:
-            graph.nodes[read]["contained"] = True
+        
+        # 2. 使用 sharedmem 并行处理重叠计算
+        with sharedmem.MapReduce(np=num_processes) as pool:
+            # 2.1 定义每个进程的任务
+            def process_read(read_0):
+                if read_0 % 10000 == 0:
+                    print(read_0/len(read_intervals))
+                local_edges = []
+                
+                for intv in read_intervals[read_0]:
+                    tree = trees[intv.chromosome]
+                    start_0, end_0 = intv.start, intv.end
+                    
+                    for intv_1 in tree.overlap(start_0, end_0):
+                        read_1 = intv_1.data
+                        if read_1 == read_0:
+                            continue
+                        
+                        start_1, end_1 = intv_1.begin, intv_1.end
+                        overlap_size = max(0, min(end_0, end_1) - max(start_0, start_1))
+                        local_edges.append((read_0, read_1, overlap_size))
+                
+                # 返回该 read 的所有边和是否被包含
+                return local_edges
+            # 2.2 并行执行
+            results = pool.map(process_read, read_intervals.keys())
+        for edges in results:
+            for u, v, overlap_size in edges:
+                if not graph.has_edge(u, v):
+                    graph.add_edge(u, v, overlap_size=overlap_size)
 
+        print('generation graph done!')
         return graph
 
     def align_edges(
@@ -201,72 +205,4 @@ def remove_false_edges(graph, reference_graph):
             false_edges.append((u, v))
     graph.remove_edges_from(false_edges)
 
-def get_neighbor_overlap_bases(query_graph: nx.Graph, reference_graph: nx.Graph):
-    overlap_size_bases = []
-    for (node_0,node_1) in query_graph.edges():
-        if (node_0,node_1) in reference_graph.edges():
-            edge_data = reference_graph.get_edge_data(node_0, node_1)
-            overlap_size = edge_data["overlap_size"]
-            overlap_size_bases.append(overlap_size)
-        else:
-            overlap_size_bases.append(0)
-    return overlap_size_bases
-    
-def get_precision(query_graph: nx.Graph, reference_graph: nx.Graph):
-    reference_edges = set(
-        tuple(sorted((node_1, node_2))) for node_1, node_2 in reference_graph.edges
-    )
-    query_edges = set(
-        tuple(sorted((read_1, read_2))) for read_1, read_2 in query_graph.edges
-    )
-    true_positive_edges = query_edges & reference_edges
-    precision = len(true_positive_edges) / len(query_edges)
-    result = dict(
-        precision_per_rank=precision,
-    )
-    return result
 
-
-def get_overlap_statistics(query_graph: nx.Graph, reference_graph: nx.Graph):
-    reference_edges = set(
-        tuple(sorted((node_1, node_2))) for node_1, node_2 in reference_graph.edges
-    )
-    nr_reference_edges = set(
-        tuple(sorted((node_1, node_2)))
-        for node_1, node_2, data in reference_graph.edges(data=True)
-        if not data["redundant"]
-    )
-    query_edges = set(
-        tuple(sorted((read_1, read_2))) for read_1, read_2 in query_graph.edges
-    )
-    true_positive_edges = query_edges & reference_edges
-    nr_true_positive_edges = query_edges & nr_reference_edges
-
-    recall = len(true_positive_edges) / len(reference_edges)
-    nr_recall = len(nr_true_positive_edges) / len(nr_reference_edges)
-
-    precision = len(true_positive_edges) / len(query_edges)
-    nr_precision = len(nr_true_positive_edges) / len(query_edges)
-
-    query_graph = query_graph.copy()
-    remove_false_edges(query_graph, reference_graph)
-    singleton_count = len([node for node in query_graph if len(query_graph[node]) <= 1])
-    singleton_fraction = singleton_count / len(query_graph.nodes)
-    component_sizes = [len(x) for x in nx.connected_components(query_graph)]
-    component_sizes.sort(reverse=True)
-    component_sizes = np.array(component_sizes)
-    node_count = len(query_graph.nodes)
-    N50 = component_sizes[component_sizes.cumsum() >= node_count * 0.5].max()
-    continuity = N50/(node_count/2)
-    result = dict(
-        precision=precision,
-        nr_precision=nr_precision,
-        recall=recall,
-        nr_recall=nr_recall,
-        singleton_count=singleton_count,
-        singleton_fraction=singleton_fraction,
-        component_sizes=len(component_sizes),
-        N50=N50,
-        continuity=continuity,
-    )
-    return result

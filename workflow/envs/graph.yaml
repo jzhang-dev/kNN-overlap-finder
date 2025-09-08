@@ -5,7 +5,7 @@ channels:
 dependencies:
   - biopython 
   - matplotlib 
-  - numpy == 1.26.4
+  - numpy
   - pandas 
   - pysam
   - python >= 3.9
@@ -13,3 +13,5 @@ dependencies:
   - requests
   - scipy
   - python-isal
+  - bx-python
+  - tqdm
