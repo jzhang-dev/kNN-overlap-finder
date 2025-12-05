@@ -395,9 +395,9 @@ rule run_SeqNeighbor:
         log="data/FEDRANN/{sample}/{region}/{platform}/k21_s{kmer_sample}_d{embedding_dimension}/FEDRANN_time.log",
     threads: 64
     params:
-        image="seqneighbor:0.4.14.0",
+        image="fedrann:0.4.17.0",
         kmer_size=21,
-        kmer_sample_fraction=lambda wildcards: 1/int(wildcards["kmer_sample"]),
+        kmer_sample_fraction=lambda wildcards: int(wildcards["kmer_sample"])/100,
         nndescent_n_trees=600,
     shell:
         """
@@ -410,8 +410,7 @@ rule run_SeqNeighbor:
             -e TZ=Asia/Shanghai \
             -e NUMBA_CACHE_DIR=/tmp/numba_cache \
             --user $(id -u):$(id -g) \
-            --memory 800g \
-            --shm-size 100g \
+            --memory 1t \
             {params.image} \
                 -i {input.fasta} \
                 -o {output.folder} \
@@ -419,7 +418,6 @@ rule run_SeqNeighbor:
                 --kmer-sample-fraction {params.kmer_sample_fraction} \
                 --seed 602 \
                 --kmer-min-multiplicity 2 \
-                --dimension-reduction mpsrp \
                 --embedding-dimension {wildcards.embedding_dimension} \
                 --nndescent-n-trees {params.nndescent_n_trees} \
                 --threads {threads} 
