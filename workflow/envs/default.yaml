@@ -8,7 +8,7 @@ dependencies:
   - numpy == 1.26.4
   - pandas 
   - pysam
-  - python >= 3.9
+  - python >= 3.10
   - python-intervaltree
   - requests
   - scipy
