@@ -41,14 +41,13 @@ def calculate_precision(neighbor_matrix, G):
         tested_edges = set()  # 用于记录已测试的边（无向图使用有序对）
         for i, neighbors in enumerate(neighbor_matrix):
             for j in neighbors[:n]:
-                if j != -1:
-                    edge = (min(i,j), max(i,j))
-                    if edge not in tested_edges:
-                        tested_edges.add(edge)
-                        if G.has_edge(i, j):
-                            TP += 1
-                        else:
-                            FP += 1
+                edge = (min(i,j), max(i,j))
+                if edge not in tested_edges:
+                    tested_edges.add(edge)
+                    if G.has_edge(i, j):
+                        TP += 1
+                    else:
+                        FP += 1
         precision = TP / (TP + FP) if (TP + FP) > 0 else 0
         precisions.append(precision)
         print(f"Precision with {n} neighbors: {precision}")

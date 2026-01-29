@@ -598,7 +598,45 @@ class FEDRANNNearestNeighbors(_NearestNeighbors):
             )[:n_neighbors]
             nbr_matrix[i, : len(neighbors)] = neighbors
         return nbr_matrix
-
+class FEDRANN2NearestNeighbors(_NearestNeighbors):
+    def get_neighbors(
+        self,
+        n_rows: int,
+        n_neighbors: int,
+        paf_path: str,
+        read_indices: Mapping[str, int],
+        *,
+        min_indentity: float = 75,
+    ) -> np.ndarray:
+        # Calculate cumulative alignment lengths
+        rank_dict = collections.defaultdict(collections.Counter)
+        i=0
+        with open_gzipped(paf_path,'rt') as f:
+            next(f)
+            for line in f:
+                li = line.strip().split('\t')
+                if len(li) == 6:
+                    i1 = read_indices.get(li[0])
+                    i2 = read_indices.get(li[2])
+                    if li[1] == '-':
+                        i1 = get_sibling_id(i1)
+                    if li[3] == '-':
+                        i2 = get_sibling_id(i2)
+                    rank = int(li[4])
+                    rank_dict[i1][i2] = rank
+        nbr_matrix = np.empty((n_rows, n_neighbors), dtype=np.int64)
+        nbr_matrix[:, :] = -1
+        for i in range(n_rows):
+            row_nbr_dict = {
+                j: rank
+                for j, rank in rank_dict[i].items()
+            }
+            neighbors = list( 
+                sorted(row_nbr_dict, key=lambda x: row_nbr_dict[x], reverse=False)
+            )[:n_neighbors]
+            nbr_matrix[i, : len(neighbors)] = neighbors
+        return nbr_matrix
+    
 class RPForest(_NearestNeighbors):
     def get_neighbors(
         self,

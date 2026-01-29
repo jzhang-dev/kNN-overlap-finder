@@ -11,7 +11,7 @@ import time
 import argparse,math
 
 sys.path.append("scripts")
-sys.path.append("../../scripts")
+sys.path.append("/home/miaocj/docker_dir/kNN-overlap-finder/scripts")
 from str2config import parse_string_to_config
 from nearest_neighbors import (
     idPAFNearestNeighbors,
@@ -19,7 +19,8 @@ from nearest_neighbors import (
     MHAPNearestNeighbors,
     MECAT2NearestNeighbors,
     wtdbg2NearestNeighbors,
-    FEDRANNNearestNeighbors
+    FEDRANNNearestNeighbors,
+    FEDRANN2NearestNeighbors
 )
 from evaluate import NearestNeighborsConfig, compute_nearest_neighbors
 
@@ -68,12 +69,13 @@ max_n_neighbors = args.n_neighbors
 print(method)
 
 
-if method in ['minimap2','xRead','BLEND','MHAP','MECAT2','wtdbg2','FEDRANN']:
+if method in ['minimap2','xRead','BLEND','MHAP','MECAT2','wtdbg2','FEDRANN','FEDRANN2']:
     paf_path = args.input[1]
     method_class_dict = {'MHAP':MHAPNearestNeighbors,
                      'MECAT2':MECAT2NearestNeighbors,
                      'wtdbg2':wtdbg2NearestNeighbors,
-                     'FEDRANN':FEDRANNNearestNeighbors}
+                     'FEDRANN':FEDRANNNearestNeighbors,
+                     'FEDRANN2':FEDRANN2NearestNeighbors}
     elapsed_time = {}
     start_time = time.time()
     meta_df = pd.read_table(tsv_path).iloc[:MAX_SAMPLE_SIZE, :].reset_index()
@@ -92,14 +94,7 @@ if method in ['minimap2','xRead','BLEND','MHAP','MECAT2','wtdbg2','FEDRANN']:
                 n_rows=n_rows, n_neighbors=max_n_neighbors, paf_path=paf_path, read_indices=read_indices
             )
     elapsed_time['nearest_neighbors'] = time.time() - start_time
-# elif 'Exact' in method and 'chr1_248M' in tsv_path:
-#     print('For saving time, extract 1w reads as query reads.')
-#     config = parse_string_to_config(method,{'sample_query_number':10000},{})
-#     neighbor_indices, elapsed_time, peak_memory = compute_nearest_neighbors(
-#         data=feature_matrix,
-#         config=config,
-#         n_neighbors=max_n_neighbors,
-#     )
+
 else:
     npz_path = args.input[1]
         ## process SRP multi-threads and batch process
